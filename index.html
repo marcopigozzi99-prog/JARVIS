@@ -134,6 +134,17 @@ dl.cmds dt { font-family: var(--mono); font-size: 13px; color: var(--ice); }
 dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 .links { display: flex; gap: 8px; flex-wrap: wrap; }
 .note-small { color: var(--muted); font-size: 13px; }
+form.link { display: flex; flex-direction: column; gap: 8px; }
+form.link input {
+  background: var(--ink); border: 1px solid var(--line); color: var(--fg); font: inherit; padding: 10px 12px; border-radius: 8px; min-width: 0;
+}
+form.link input:focus { outline: none; border-color: var(--ice); }
+.linkrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ok { color: var(--ok); }
+ul.plan { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+ul.plan li { display: grid; grid-template-columns: 64px 1fr; gap: 10px; }
+ul.plan li b { font: 500 12px var(--mono); color: var(--ice); text-transform: uppercase; letter-spacing: .06em; padding-top: 2px; }
+ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -189,6 +200,10 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
       <ol class="prio" id="prio"></ol>
     </div>
     <div class="block">
+      <h2>Oggi si mangia <a class="btn small" id="lnkPiano" target="_blank" rel="noopener">Piano</a></h2>
+      <ul class="plan" id="todayPlan"><li class="empty" style="display:block">Leggo il piano del ricettario…</li></ul>
+    </div>
+    <div class="block">
       <h2>Entrata secondaria <span class="when">stasera</span></h2>
       <div class="step" id="step"></div>
     </div>
@@ -219,10 +234,24 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
         <div><dt>priorità: finire la storia 3</dt><dd>Aggiunge una priorità. Ne tengo al massimo tre.</dd></div>
         <div><dt>cosa devo fare</dt><dd>Ti leggo le priorità aperte.</dd></div>
         <div><dt>passo: scrivere la scheda Etsy</dt><dd>Imposta il passo di stasera per l'entrata secondaria.</dd></div>
+        <div><dt>cosa mangiamo stasera · il piano di domani · il piano della settimana</dt><dd>Leggo il piano settimanale del ricettario.</dd></div>
+        <div><dt>la ricetta della carbonara · ingredienti del tiramisù</dt><dd>Ti leggo gli ingredienti e ti apro la ricetta.</dd></div>
+        <div><dt>come si fa la cena di stasera</dt><dd>Prendo la ricetta prevista nel piano e te la leggo.</dd></div>
+        <div><dt>cosa cucino con zucchine e uova</dt><dd>Cerco tra le 318 ricette quelle con quegli ingredienti.</dd></div>
         <div><dt>meteo · che ore sono · che giorno è</dt><dd>Risposte rapide.</dd></div>
         <div><dt>apri formichina · apri ricettario</dt><dd>Apre le tue app.</dd></div>
         <div><dt>qualsiasi altra domanda</dt><dd>La giro a Claude, già scritta, con il tuo abbonamento.</dd></div>
       </dl>
+    </div>
+    <div class="block">
+      <h2>Collega il ricettario <span class="when" id="linkState">non collegato</span></h2>
+      <p class="note-small" id="linkHelp">Per leggere il piano settimanale, accedi una volta con lo stesso account che usi nel ricettario (Altro › Account e famiglia). La password non viene salvata: Jarvis tiene solo un accesso sul telefono, che puoi togliere quando vuoi.</p>
+      <form class="link" id="linkForm" autocomplete="on">
+        <input id="linkEmail" type="email" placeholder="Email del ricettario" autocomplete="username" aria-label="Email del ricettario" required>
+        <input id="linkPw" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password del ricettario" required>
+        <div class="linkrow"><button class="btn" type="submit" id="linkBtn">Collega</button><span class="note-small" id="linkMsg"></span></div>
+      </form>
+      <div class="linkrow" id="linkedRow" hidden><span class="note-small ok" id="linkedAs"></span><button class="btn small" type="button" id="unlinkBtn">Scollega</button></div>
     </div>
     <p class="note-small">Con Siri: il Comando Rapido "Jarvis" può aprire questa pagina aggiungendo <code>?q=</code> e il testo dettato, e Jarvis esegue subito il comando.</p>
   </section>
@@ -231,7 +260,7 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 <script>
 (() => {
   const FORMICHINA = 'https://marcopigozzi99-prog.github.io/Formichina/';
-  const RICETTARIO = 'https://marcopigozzi99-prog.github.io/Ricettario/';
+  const RICETTARIO = location.hostname.endsWith('github.io') ? location.origin + '/Ricettario/' : 'https://marcopigozzi99-prog.github.io/Ricettario/';
   const PLACE = { name: 'Verona est', lat: 45.42, lon: 11.17 };
   const KEY = 'jarvis-v1';
   const $ = (id) => document.getElementById(id);
@@ -253,6 +282,12 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
     voice = vs.find((v) => /it[-_]IT/i.test(v.lang) && /Luca|Alice|Federica/i.test(v.name)) || vs.find((v) => /^it/i.test(v.lang)) || null;
   };
   if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  // Su iPhone la voce parte solo se sbloccata da un tocco: lo faccio al primo tocco sul microfono o su Invia.
+  let voiceReady = false;
+  const unlockSpeech = () => {
+    if (voiceReady || !('speechSynthesis' in window)) return;
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); voiceReady = true; } catch {}
+  };
   const speak = (text) => {
     try {
       if (!('speechSynthesis' in window)) return;
@@ -265,6 +300,7 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 
   // ---------- Risposta ----------
   const reply = (you, text, actions = [], kind = '') => {
+    $('status').textContent = 'Pronto';
     $('you').textContent = you ? '› ' + you : '';
     $('say').textContent = text;
     $('reply').className = 'reply ' + kind;
@@ -306,6 +342,226 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 
   const fUrl = (p) => FORMICHINA + '?' + new URLSearchParams(p).toString();
 
+  // ---------- Ricettario: libro e piano ----------
+  const FB = { key: 'AIzaSyCnd5RVqfp7tMSG8dRcwf8epWaDhEEqzFU', project: 'ricettario-famiglia-b5837' };
+  const DAYK = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+  const DAYL = { lun: 'lunedì', mar: 'martedì', mer: 'mercoledì', gio: 'giovedì', ven: 'venerdì', sab: 'sabato', dom: 'domenica' };
+  const norm = (x) => String(x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const STOP = new Set('il lo la i gli le un uno una di del della dei degli delle da dal dalla con per e ed a al alla ai alle in nel nella su sul sulla ricetta ricette come si fa fare prepara preparo preparare ingredienti ingrediente cosa cucino posso mi dici dimmi leggi apri mostra jarvis ci serve servono che quali quale fammi vedere voglio'.split(' '));
+  const words = (x) => norm(x).split(' ').filter((w) => w.length > 2 && !STOP.has(w));
+  const stem = (w) => w.length > 5 ? w.slice(0, w.length - 2) : w.replace(/[aeio]$/, '');
+  const recipeUrl = (r) => RICETTARIO + '#/c/' + r.c + '/r/' + r.n;
+
+  let book = null, bookP = null;
+  function loadBook() {
+    if (book) return Promise.resolve(book);
+    if (!bookP) {
+      bookP = fetch(RICETTARIO + 'index.html', { cache: 'no-cache' })
+        .then((r) => { if (!r.ok) throw new Error('http'); return r.text(); })
+        .then((t) => {
+          const m = t.match(/<script id="data" type="application\/json">([\s\S]*?)<\/script>/);
+          const d = JSON.parse(m[1]); const out = [];
+          d.chapters.forEach((c) => (c.recipes || []).forEach((r) => out.push({
+            c: c.num, n: r.num, chap: c.title, title: r.title, servings: r.servings, time: r.time || '',
+            ing: r.ingredients || [], steps: r.steps || [], tk: norm(r.title), ik: norm((r.ingredients || []).join(' ')),
+          })));
+          book = out; return book;
+        })
+        .catch((e) => { bookP = null; throw e; });
+    }
+    return bookP;
+  }
+  const byNums = (c, n) => (book || []).find((r) => r.c === c && r.n === n) || null;
+
+  function findRecipe(q) {
+    const ws = words(q); if (!ws.length || !book) return null;
+    let best = null, bestScore = 0;
+    book.forEach((r) => {
+      let sc = 0;
+      ws.forEach((w) => { if (r.tk.includes(w)) sc += 3; else if (r.tk.includes(stem(w))) sc += 2; });
+      if (r.tk === ws.join(' ')) sc += 5;
+      if (sc > bestScore || (sc === bestScore && best && r.tk.length < best.tk.length)) { best = r; bestScore = sc; }
+    });
+    return bestScore >= Math.max(2, ws.length) ? best : null;
+  }
+  function findByIngredients(list) {
+    const ws = list.map(stem).filter(Boolean); if (!ws.length || !book) return [];
+    return book.filter((r) => r.c !== 9 && ws.every((w) => r.ik.includes(w)))
+      .sort((a, b) => a.ing.length - b.ing.length).slice(0, 3);
+  }
+
+  // Accesso Firebase (lo stesso del ricettario). Si salva solo il token di rinnovo, mai la password.
+  async function fbSignIn(email, password) {
+    const r = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + FB.key, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, returnSecureToken: true }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      const m = (j.error && j.error.message) || '';
+      throw new Error(/INVALID|PASSWORD|EMAIL_NOT_FOUND|CREDENTIAL/.test(m) ? 'Email o password non corrette.' : /TOO_MANY/.test(m) ? 'Troppi tentativi, riprova tra qualche minuto.' : 'Accesso non riuscito.');
+    }
+    return { refresh: j.refreshToken, uid: j.localId, email: j.email };
+  }
+  let idTok = null, idExp = 0;
+  async function fbToken() {
+    if (idTok && Date.now() < idExp) return idTok;
+    const r = await fetch('https://securetoken.googleapis.com/v1/token?key=' + FB.key, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(st.fb.refresh),
+    });
+    const j = await r.json();
+    if (!r.ok) { const e = new Error('auth'); e.dead = true; throw e; }
+    idTok = j.id_token; idExp = Date.now() + (parseInt(j.expires_in, 10) - 60) * 1000;
+    if (j.refresh_token && j.refresh_token !== st.fb.refresh) { st.fb.refresh = j.refresh_token; save(); }
+    return idTok;
+  }
+  async function fsGet(path) {
+    const tok = await fbToken();
+    const r = await fetch(`https://firestore.googleapis.com/v1/projects/${FB.project}/databases/(default)/documents/${path}`, { headers: { Authorization: 'Bearer ' + tok } });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error('fs');
+    return r.json();
+  }
+  const fsStr = (doc, k) => (doc && doc.fields && doc.fields[k] && doc.fields[k].stringValue) || null;
+
+  // Il piano: prima dall'account collegato, poi dalla memoria di questo browser, se c'è.
+  async function getPiano() {
+    if (st.fb && st.fb.refresh) {
+      try {
+        const u = await fsGet('users/' + st.fb.uid);
+        const fid = fsStr(u, 'fid');
+        if (!fid) return { err: 'nofamily' };
+        const doc = await fsGet('families/' + fid + '/state/piano');
+        const raw = fsStr(doc, 'json');
+        return { piano: raw ? JSON.parse(raw) : {} };
+      } catch (e) {
+        if (e.dead) { st.fb = null; save(); renderLink(); return { err: 'expired' }; }
+        return { err: 'offline' };
+      }
+    }
+    try { const raw = localStorage.getItem('ricettario_piano_v1'); if (raw) return { piano: JSON.parse(raw) }; } catch {}
+    return { err: 'nolink' };
+  }
+  const PIANO_ERR = {
+    nolink: 'Non riesco ancora a leggere il piano. Collega il ricettario una volta sola dal pannello Comandi.',
+    expired: 'L\'accesso al ricettario è scaduto. Ricollegalo dal pannello Comandi.',
+    nofamily: 'Il tuo account del ricettario non ha ancora una famiglia: il piano è salvato solo sul telefono. Nel ricettario apri Altro, Account e famiglia, e crea la famiglia.',
+    offline: 'Non riesco a raggiungere il ricettario in questo momento. Controlla la connessione e riprova.',
+  };
+  function slotInfo(p, slot) {
+    const a = p[slot]; if (!a) return null;
+    if (a.special) return { text: a.special === 'uscita' ? 'si mangia fuori' : 'sgarro o pizza in compagnia' };
+    if (a.customText) return { text: a.customText };
+    const r = byNums(a.cnum, a.rnum);
+    return r ? { text: r.title, recipe: r } : null;
+  }
+  function dayPlan(p, day) {
+    return { pranzo: slotInfo(p, day + '-pranzo'), cena: slotInfo(p, day + '-cena'), contorno: slotInfo(p, day + '-contorno') };
+  }
+  function dayFrom(t) {
+    const now = new Date();
+    if (/dopodomani/.test(t)) return DAYK[(now.getDay() + 2) % 7];
+    if (/domani/.test(t)) return DAYK[(now.getDay() + 1) % 7];
+    const names = { lun: /luned/, mar: /marted/, mer: /mercoled/, gio: /gioved/, ven: /venerd/, sab: /sabato/, dom: /domenica/ };
+    for (const k in names) if (names[k].test(t)) return k;
+    return DAYK[now.getDay()];
+  }
+  const dayWord = (day) => (day === DAYK[new Date().getDay()] ? 'oggi' : day === DAYK[(new Date().getDay() + 1) % 7] ? 'domani' : DAYL[day]);
+
+  async function renderTodayPlan() {
+    const ul = $('todayPlan');
+    try { await loadBook(); } catch { ul.innerHTML = '<li class="empty" style="display:block">Ricettario non raggiungibile.</li>'; return; }
+    const res = await getPiano();
+    if (res.err) { ul.innerHTML = ''; const li = document.createElement('li'); li.className = 'empty'; li.style.display = 'block'; li.textContent = PIANO_ERR[res.err]; ul.appendChild(li); return; }
+    const d = dayPlan(res.piano, DAYK[new Date().getDay()]); ul.innerHTML = '';
+    [['Pranzo', d.pranzo], ['Cena', d.cena], ['Contorno', d.contorno]].forEach(([k, v]) => {
+      if (k === 'Contorno' && !v) return;
+      const li = document.createElement('li'); const b = document.createElement('b'); b.textContent = k;
+      let s;
+      if (v && v.recipe) { s = document.createElement('a'); s.href = recipeUrl(v.recipe); s.target = '_blank'; s.rel = 'noopener'; s.style.color = 'inherit'; }
+      else s = document.createElement('span');
+      s.textContent = v ? v.text : 'niente in programma';
+      if (!v) s.style.color = 'var(--muted)';
+      li.append(b, s); ul.appendChild(li);
+    });
+  }
+
+  function speakRecipe(q, r, intro) {
+    const ing = r.ing.slice(0, 10).map((x) => x.replace(/\s*q\.?b\.?$/i, '')).join(', ');
+    const more = r.ing.length > 10 ? ` e altri ${r.ing.length - 10} ingredienti` : '';
+    reply(q, `${intro || ''}${r.title}${r.servings ? ', per ' + r.servings + ' persone' : ''}${r.time ? ', ' + r.time : ''}. Ti servono: ${ing}${more}. Ti apro la ricetta per i passaggi.`,
+      [{ label: 'Apri la ricetta', href: recipeUrl(r) }]);
+  }
+
+  async function handleFood(q, t) {
+    $('status').textContent = 'Controllo il ricettario…';
+    try { await loadBook(); } catch { $('status').textContent = 'Pronto'; return reply(q, 'Non riesco a raggiungere il ricettario in questo momento. Riprova tra poco.'); }
+    $('status').textContent = 'Pronto';
+
+    // Cosa cucino con X e Y
+    const m = t.match(/(?:cucin\w*|prepar\w*|fare|faccio|mangi\w*)\s+con\s+(.+)$/) || t.match(/^(?:ricett\w*|piatti?)\s+con\s+(.+)$/);
+    if (m) {
+      const list = m[1].split(/,|\se\s|\sed\s/).map((x) => words(x)[0]).filter(Boolean);
+      const found = findByIngredients(list);
+      if (!found.length) return reply(q, `Non trovo ricette con ${list.join(' e ')}. Prova con un ingrediente in meno.`);
+      return reply(q, `Con ${list.join(' e ')} puoi fare: ` + found.map((r) => r.title).join('; ') + '.',
+        found.map((r) => ({ label: r.title, href: recipeUrl(r) })));
+    }
+
+    const wantsRecipe = /ricett|ingredient|come si (fa|prepara|cucina)|come (faccio|preparo)|procediment/.test(t);
+    const aboutPlan = /piano|stasera|stase|oggi|domani|luned|marted|mercoled|gioved|venerd|sabato|domenica|settimana|in programma|previsto|cosa (si )?mangi|cosa c.? per|cena|pranzo/.test(t);
+
+    // Ricetta di un piatto preciso (non del piano)
+    const planRef = /\b(cena|pranzo|stasera|oggi|domani|dopodomani|luned|marted|mercoled|gioved|venerd|sabato|domenica|piano|in programma|previst)/.test(t);
+    if (wantsRecipe && !planRef) {
+      const r = findRecipe(t.replace(/.*?(ricetta|ingredienti|come si fa|come si prepara|come si cucina|come faccio|come preparo)( del| della| dello| dei| degli| delle| di| la| il| lo| le| i| gli)?/, ''));
+      if (r) return speakRecipe(q, r);
+      if (!aboutPlan) return reply(q, 'Non trovo questa ricetta nel ricettario. Prova con il nome del piatto, ad esempio "ricetta della carbonara".');
+    }
+
+    if (aboutPlan || wantsRecipe) {
+      const res = await getPiano();
+      if (res.err) return reply(q, PIANO_ERR[res.err], [{ label: 'Apri il piano', href: RICETTARIO + '#/piano' }]);
+      const p = res.piano;
+
+      if (/settimana/.test(t)) {
+        const order = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
+        const parts = order.map((d) => { const x = dayPlan(p, d); const c = x.cena ? x.cena.text : null; return c ? `${DAYL[d]} ${c}` : null; }).filter(Boolean);
+        return reply(q, parts.length ? 'Le cene della settimana: ' + parts.join('; ') + '.' : 'Il piano della settimana è vuoto.', [{ label: 'Apri il piano', href: RICETTARIO + '#/piano' }]);
+      }
+
+      const day = dayFrom(t), dw = dayWord(day), d = dayPlan(p, day);
+      const meal = /pranzo/.test(t) ? 'pranzo' : (/cena|stasera|stase/.test(t) ? 'cena' : (new Date().getHours() < 15 && dw === 'oggi' ? 'pranzo' : 'cena'));
+      const main = d[meal];
+
+      if (wantsRecipe) {
+        if (main && main.recipe) return speakRecipe(q, main.recipe, `Per ${meal === 'cena' ? 'la cena' : 'il pranzo'} di ${dw}: `);
+        return reply(q, main ? `Per ${meal === 'cena' ? 'la cena' : 'il pranzo'} di ${dw} c'è: ${main.text}. Non è una ricetta del libro.` : `Per ${meal === 'cena' ? 'la cena' : 'il pranzo'} di ${dw} non c'è niente nel piano.`);
+      }
+
+      const say = (x) => (x ? x.text : null);
+      let txt;
+      if (/pranzo|cena|stasera|stase/.test(t)) {
+        txt = main ? `${meal === 'cena' ? 'A cena' : 'A pranzo'} ${dw === 'oggi' ? (meal === 'cena' ? 'stasera' : 'oggi') : dw}: ${main.text}` : `Per ${meal === 'cena' ? 'la cena' : 'il pranzo'} di ${dw} non c'è niente nel piano`;
+        if (meal === 'cena' && d.contorno && main && !(p[day + '-cena'] || {}).special) txt += `, con contorno di ${d.contorno.text}`;
+        txt += '.';
+      } else {
+        const bits = [];
+        if (say(d.pranzo)) bits.push('a pranzo ' + say(d.pranzo));
+        if (say(d.cena)) bits.push('a cena ' + say(d.cena) + (d.contorno ? ' con ' + d.contorno.text : ''));
+        txt = bits.length ? `Il piano di ${dw}: ${bits.join(', ')}.` : `Il piano di ${dw} è vuoto.`;
+      }
+      const acts = [];
+      if (main && main.recipe) acts.push({ label: 'Apri la ricetta', href: recipeUrl(main.recipe) });
+      acts.push({ label: 'Apri il piano', href: RICETTARIO + '#/piano' });
+      return reply(q, txt, acts);
+    }
+
+    const r = findRecipe(t);
+    if (r) return speakRecipe(q, r);
+    return reply(q, 'Non ho trovato niente nel ricettario per questa domanda.', [{ label: 'Apri il ricettario', href: RICETTARIO }]);
+  }
+
   function handle(raw) {
     const q = raw.trim(); if (!q) return;
     const t = q.toLowerCase();
@@ -343,6 +599,10 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
       return reply(q, open.length ? 'Le tue priorità: ' + open.map((p, i) => `${i + 1}, ${p.text}`).join('. ') + '.' : 'Nessuna priorità aperta. Dimmi "priorità:" seguito da cosa fare.');
     }
 
+    // Ricettario e piano
+    if (/ricettario/.test(t) && /^(apri|mostra)/.test(t)) return reply(q, 'Ecco il ricettario.', [{ label: 'Apri Ricettario', href: RICETTARIO }]);
+    if (/ricett|ingredient|piano|mangi|cucin|cena|pranzo|contorno|come si (fa|prepara)|cosa c.? per/.test(t)) return handleFood(q, t);
+
     // Entrata secondaria
     if ((m = q.match(/^\s*passo\s*[:,]\s*(.+)$/i))) { st.step = m[1].trim(); save(); renderStep(); return reply(q, 'Passo di stasera impostato.'); }
     if (/stasera|entrata secondaria|cosa faccio dopo/.test(t)) return reply(q, st.step ? 'Stasera: ' + st.step : 'Non hai ancora impostato il passo di stasera.');
@@ -352,7 +612,6 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
     if (/che giorno|che data/.test(t)) return reply(q, 'Oggi è ' + new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.');
     if (/meteo|piove|pioggia|temperatura/.test(t)) return reply(q, wxText || 'Il meteo non è ancora disponibile, riprova tra un momento.');
     if (/^(apri )?formichina|budget|movimenti/.test(t)) return reply(q, 'Ecco Formichina.', [{ label: 'Apri Formichina', href: FORMICHINA }]);
-    if (/ricettario|ricett/.test(t) && /apri|mostra/.test(t)) return reply(q, 'Ecco il ricettario.', [{ label: 'Apri Ricettario', href: RICETTARIO }]);
     if (/le mie idee|leggi le (idee|note)/.test(t)) {
       const last = st.notes.slice(0, 3);
       return reply(q, last.length ? 'Le ultime: ' + last.map((n) => n.text).join('. ') + '.' : 'Non hai ancora note.');
@@ -369,6 +628,7 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec = null;
   $('mic').addEventListener('click', () => {
+    unlockSpeech();
     if (!SR) { $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
     if (rec) { rec.stop(); return; }
     try {
@@ -387,7 +647,7 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
       rec.start();
     } catch { rec = null; document.body.classList.remove('listening'); $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; }
   });
-  $('cmdForm').addEventListener('submit', (e) => { e.preventDefault(); handle($('cmd').value); $('cmd').value = ''; });
+  $('cmdForm').addEventListener('submit', (e) => { e.preventDefault(); unlockSpeech(); handle($('cmd').value); $('cmd').value = ''; });
 
   // ---------- Pannelli ----------
   function show(tab) {
@@ -432,6 +692,26 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
     setTimeout(() => { $('copyNotes').textContent = 'Copia tutto'; }, 1800);
   });
 
+  // ---------- Collegamento al ricettario ----------
+  function renderLink() {
+    const on = !!(st.fb && st.fb.refresh);
+    $('linkForm').hidden = on; $('linkHelp').hidden = on; $('linkedRow').hidden = !on;
+    $('linkState').textContent = on ? 'collegato' : 'non collegato';
+    $('linkedAs').textContent = on ? 'Collegato come ' + st.fb.email : '';
+  }
+  $('linkForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('linkBtn').disabled = true; $('linkMsg').textContent = 'Accesso in corso…';
+    try {
+      st.fb = await fbSignIn($('linkEmail').value.trim(), $('linkPw').value); save();
+      $('linkPw').value = ''; $('linkMsg').textContent = '';
+      renderLink(); renderTodayPlan();
+      reply('', 'Ricettario collegato. Ora posso leggerti il piano: prova a chiedermi cosa mangiamo stasera.');
+    } catch (err) { $('linkMsg').textContent = err.message || 'Accesso non riuscito.'; }
+    $('linkBtn').disabled = false;
+  });
+  $('unlinkBtn').addEventListener('click', () => { st.fb = null; idTok = null; save(); renderLink(); renderTodayPlan(); });
+
   // ---------- Orologio, saluto, meteo ----------
   const greet = () => { const h = new Date().getHours(); return h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera'; };
   const tick = () => { $('clock').textContent = new Date().toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
@@ -451,7 +731,8 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
     }).catch(() => { $('wx').innerHTML = '<span class="empty">Meteo non raggiungibile da qui. Nell\'app installata si aggiorna da solo.</span>'; });
 
   // ---------- Avvio ----------
-  $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO;
+  $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO; $('lnkPiano').href = RICETTARIO + '#/piano';
+  renderLink(); renderTodayPlan();
   renderPrio(); renderStep(); renderNotes();
   $('say').textContent = greet() + ', Marco. Tocca il cerchio e parla, oppure scrivi un comando.';
   try {
