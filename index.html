@@ -71,6 +71,8 @@ header.top { display: flex; justify-content: space-between; align-items: baselin
 .mic svg { width: 30px; height: 30px; }
 .listening .mic { animation: pulse 1.2s ease-in-out infinite; border-color: var(--amber); color: var(--amber); }
 .status { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; min-height: 1.5em; text-align: center; }
+.speaking .mic { box-shadow: 0 0 40px rgba(111, 211, 255, .55); }
+.speaking .ring .spin { animation-duration: 6s; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { box-shadow: 0 0 46px rgba(242, 180, 90, .55); transform: scale(1.03); } }
 @media (prefers-reduced-motion: reduce) { .ring .spin, .listening .mic { animation: none; } }
@@ -135,10 +137,11 @@ dl.cmds dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 .links { display: flex; gap: 8px; flex-wrap: wrap; }
 .note-small { color: var(--muted); font-size: 13px; }
 form.link { display: flex; flex-direction: column; gap: 8px; }
-form.link input {
+form.link input, form.link textarea {
   background: var(--ink); border: 1px solid var(--line); color: var(--fg); font: inherit; padding: 10px 12px; border-radius: 8px; min-width: 0;
 }
-form.link input:focus { outline: none; border-color: var(--ice); }
+form.link textarea { font: 13px var(--mono); resize: vertical; }
+form.link input:focus, form.link textarea:focus { outline: none; border-color: var(--ice); }
 .linkrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .ok { color: var(--ok); }
 ul.plan { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
@@ -219,6 +222,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   <section class="pane" id="p-idee" hidden>
     <div class="block">
+      <h2>Da comprare <span class="when">aggiunte a voce</span></h2>
+      <ul class="notes" id="extraList"></ul>
+    </div>
+    <div class="block">
       <h2>Idee e note <button class="btn small" type="button" id="copyNotes">Copia tutto</button></h2>
       <ul class="notes" id="notes"></ul>
     </div>
@@ -229,6 +236,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       <h2>Cosa capisco</h2>
       <dl class="cmds">
         <div><dt>ho speso 12 al supermercato</dt><dd>Apre Formichina con la spesa compilata. Scegli la categoria se serve e premi Salva.</dd></div>
+        <div><dt>quanto posso spendere oggi · quanto mi resta questo mese · quanto ho speso al bar</dt><dd>Leggo il budget da Formichina (dopo averla collegata qui sotto).</dd></div>
         <div><dt>ho incassato 50 da una vendita</dt><dd>Registra un'entrata in Formichina.</dd></div>
         <div><dt>idea: un capitolo ambientato al lago</dt><dd>Salva l'idea qui, con l'etichetta del progetto se la riconosco (trilogia, KDP, garage, giardino…).</dd></div>
         <div><dt>priorità: finire la storia 3</dt><dd>Aggiunge una priorità. Ne tengo al massimo tre.</dd></div>
@@ -237,10 +245,12 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <div><dt>cosa mangiamo stasera · il piano di domani · il piano della settimana</dt><dd>Leggo il piano settimanale del ricettario.</dd></div>
         <div><dt>la ricetta della carbonara · ingredienti del tiramisù</dt><dd>Ti leggo gli ingredienti e ti apro la ricetta.</dd></div>
         <div><dt>come si fa la cena di stasera</dt><dd>Prendo la ricetta prevista nel piano e te la leggo.</dd></div>
+        <div><dt>cosa devo comprare · aggiungi latte e uova alla spesa · ho comprato il latte</dt><dd>Leggo la lista della spesa del ricettario (dal piano, senza dispensa e voci spuntate) più quello che aggiungi tu.</dd></div>
         <div><dt>cosa cucino con zucchine e uova</dt><dd>Cerco tra le 318 ricette quelle con quegli ingredienti.</dd></div>
         <div><dt>meteo · che ore sono · che giorno è</dt><dd>Risposte rapide.</dd></div>
         <div><dt>apri formichina · apri ricettario</dt><dd>Apre le tue app.</dd></div>
-        <div><dt>qualsiasi altra domanda</dt><dd>La giro a Claude, già scritta, con il tuo abbonamento.</dd></div>
+        <div><dt>qualsiasi altra domanda</dt><dd>Se il cervello IA è collegato, ti rispondo io e possiamo continuare il discorso. Altrimenti la giro a Claude, già scritta.</dd></div>
+        <div><dt>basta · grazie · nuova conversazione</dt><dd>Chiude il dialogo vocale, oppure riparte da capo con un altro argomento.</dd></div>
       </dl>
     </div>
     <div class="block">
@@ -253,10 +263,30 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       </form>
       <div class="linkrow" id="linkedRow" hidden><span class="note-small ok" id="linkedAs"></span><button class="btn small" type="button" id="unlinkBtn">Scollega</button></div>
     </div>
+    <div class="block">
+      <h2>Cervello IA <span class="when" id="brState">non collegato</span></h2>
+      <p class="note-small" id="brHelp">Per parlare liberamente con Jarvis serve il suo "cervello": un piccolo servizio gratuito su Cloudflare che custodisce la chiave dell'IA. Quando l'hai creato, incolla qui il suo indirizzo (quello che finisce con /chat).</p>
+      <form class="link" id="brForm" autocomplete="off">
+        <input id="brUrl" type="url" placeholder="https://jarvis-cervello….workers.dev/…/chat" aria-label="Indirizzo del cervello" required>
+        <div class="linkrow"><button class="btn" type="submit" id="brBtn">Collega</button><span class="note-small" id="brMsg"></span></div>
+      </form>
+      <div class="linkrow" id="brRow" hidden><span class="note-small ok" id="brAs">Cervello collegato</span><button class="btn small" type="button" id="brOff">Scollega</button></div>
+    </div>
+    <div class="block">
+      <h2>Collega Formichina <span class="when" id="fzState">non collegata</span></h2>
+      <p class="note-small" id="fzHelp">Serve la sincronizzazione attiva in Formichina (Altro › Sincronizzazione). Incolla qui la stessa configurazione Firebase e scrivi la stessa frase segreta. La frase non viene salvata: Jarvis tiene solo la chiave per leggere i dati, sul telefono, come fa Formichina.</p>
+      <form class="link" id="fzForm" autocomplete="off">
+        <textarea id="fzCfg" rows="4" placeholder="Configurazione Firebase (const firebaseConfig = { … })" aria-label="Configurazione Firebase di Formichina" required></textarea>
+        <input id="fzPass" type="password" placeholder="Frase segreta di Formichina" autocomplete="off" aria-label="Frase segreta di Formichina" required>
+        <div class="linkrow"><button class="btn" type="submit" id="fzBtn">Collega</button><span class="note-small" id="fzMsg"></span></div>
+      </form>
+      <div class="linkrow" id="fzRow" hidden><span class="note-small ok">Formichina collegata</span><button class="btn small" type="button" id="fzOff">Scollega</button></div>
+    </div>
     <p class="note-small">Con Siri: il Comando Rapido "Jarvis" può aprire questa pagina aggiungendo <code>?q=</code> e il testo dettato, e Jarvis esegue subito il comando.</p>
   </section>
 </div>
 
+<script src="lista.js"></script>
 <script>
 (() => {
   const FORMICHINA = 'https://marcopigozzi99-prog.github.io/Formichina/';
@@ -273,6 +303,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   };
   let st;
   try { st = JSON.parse(localStorage.getItem(KEY)) || sample; } catch { st = sample; }
+  if (!Array.isArray(st.extra)) st.extra = [];
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch {} };
 
   // ---------- Voce ----------
@@ -288,14 +319,19 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     if (voiceReady || !('speechSynthesis' in window)) return;
     try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); voiceReady = true; } catch {}
   };
+  // Dialogo: dopo che Jarvis ha parlato, se la conversazione è aperta torna ad ascoltare da solo.
+  let convo = false, afterSpeak = null;
+  const runAfterSpeak = () => { document.body.classList.remove('speaking'); if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 250); } };
   const speak = (text) => {
     try {
-      if (!('speechSynthesis' in window)) return;
+      if (!('speechSynthesis' in window)) { runAfterSpeak(); return; }
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.replace(/[•·]/g, ','));
+      const u = new SpeechSynthesisUtterance(text.replace(/[•·]/g, ',').replace(/—/g, ','));
       u.lang = 'it-IT'; if (voice) u.voice = voice; u.rate = 1.04;
+      u.onend = runAfterSpeak; u.onerror = runAfterSpeak;
+      document.body.classList.add('speaking');
       speechSynthesis.speak(u);
-    } catch {}
+    } catch { runAfterSpeak(); }
   };
 
   // ---------- Risposta ----------
@@ -310,8 +346,119 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       el.className = 'btn' + (a.amber ? ' amber' : ''); el.textContent = a.label; el.href = a.href;
       el.target = '_blank'; el.rel = 'noopener'; box.appendChild(el);
     });
+    afterSpeak = convo ? () => listen(true) : null;
     speak(text);
   };
+
+  // ---------- Formichina: budget a voce ----------
+  // Legge lo stesso documento cifrato che Formichina sincronizza su Firebase, lo decifra qui sul telefono
+  // con la chiave ricavata dalla frase segreta e usa il motore di calcolo di Formichina.
+  const F_BASE = location.hostname.endsWith('github.io') ? location.origin + '/Formichina/' : FORMICHINA;
+  let fMods = null;
+  const fLoad = () => fMods || (fMods = Promise.all([import(F_BASE + 'sync.js'), import(F_BASE + 'calc.js'), import(F_BASE + 'store.js'), import(F_BASE + 'util.js')])
+    .then(([sync, calc, store, util]) => ({ sync, calc, store, util })).catch((e) => { fMods = null; throw e; }));
+  let fIdTok = null, fIdExp = 0;
+  async function fToken() {
+    const f = st.fz;
+    if (fIdTok && Date.now() < fIdExp) return fIdTok;
+    let j;
+    if (f.refresh) {
+      const r = await fetch('https://securetoken.googleapis.com/v1/token?key=' + f.apiKey, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(f.refresh) });
+      j = await r.json();
+      if (r.ok) { fIdTok = j.id_token; fIdExp = Date.now() + (parseInt(j.expires_in, 10) - 60) * 1000; if (j.refresh_token !== f.refresh) { f.refresh = j.refresh_token; save(); } return fIdTok; }
+    }
+    const r = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' + f.apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }) });
+    j = await r.json();
+    if (!r.ok) { const e = new Error('auth'); e.code = 'denied'; throw e; }
+    f.refresh = j.refreshToken; save();
+    fIdTok = j.idToken; fIdExp = Date.now() + (parseInt(j.expiresIn, 10) - 60) * 1000;
+    return fIdTok;
+  }
+  async function fState() {
+    const m = await fLoad();
+    const f = st.fz;
+    const tok = await fToken();
+    const r = await fetch(`https://firestore.googleapis.com/v1/projects/${f.projectId}/databases/(default)/documents/budgets/${f.docId}`, { headers: { Authorization: 'Bearer ' + tok } });
+    if (r.status === 404) { const e = new Error('nodoc'); e.code = 'nodoc'; throw e; }
+    if (!r.ok) { const e = new Error('fs'); e.code = r.status === 403 ? 'denied' : 'offline'; throw e; }
+    const doc = await r.json();
+    const data = doc.fields && doc.fields.data && doc.fields.data.stringValue;
+    if (!data) { const e = new Error('nodoc'); e.code = 'nodoc'; throw e; }
+    let state;
+    try { state = await m.sync.decryptState(data, f.keyB64); } catch { const e = new Error('key'); e.code = 'key'; throw e; }
+    return { m, state: m.store.migrate(state) };
+  }
+  const F_ERR = {
+    nolink: 'Non sono ancora collegato a Formichina. Collegala una volta sola dal pannello Comandi.',
+    nodoc: 'Non trovo i dati di Formichina: controlla che in Formichina la sincronizzazione sia attiva con la stessa frase segreta.',
+    key: 'La frase segreta non corrisponde a quella di Formichina. Ricollegala dal pannello Comandi.',
+    denied: 'Firebase ha rifiutato la lettura: controlla che la configurazione sia quella di Formichina.',
+    offline: 'Non riesco a raggiungere Formichina in questo momento. Riprova tra poco.',
+  };
+  async function handleBudget(q, t) {
+    if (!st.fz) return reply(q, F_ERR.nolink, [{ label: 'Apri Formichina', href: FORMICHINA }]);
+    $('status').textContent = 'Controllo Formichina…';
+    let m, state;
+    try { ({ m, state } = await fState()); } catch (e) { return reply(q, F_ERR[e.code] || F_ERR.offline, [{ label: 'Apri Formichina', href: FORMICHINA }]); }
+    if (!state.settings.onboarded) return reply(q, 'Formichina non è ancora configurata.', [{ label: 'Apri Formichina', href: FORMICHINA }]);
+    const c = m.calc.computeCycle(state, m.util.todayISO());
+    const eur = (cents) => m.util.moneyPlain(cents).replace(/,00$/, '') + ' euro';
+    const cats = m.store.alive(state.categories);
+    const cat = cats.find((x) => x.kind === 'expense' && x.name !== 'Altro' && RicLista.normalize(x.name).split(' ').some((w) => w.length > 2 && t.includes(w.slice(0, 5))));
+    if (cat && /speso|spes[ae]|quanto/.test(t)) {
+      const e = c.byCat.get(cat.id);
+      const spent = e ? e.total : 0;
+      let txt = `In questo ciclo hai speso ${eur(spent)} in ${cat.name}`;
+      const env = c.envelopes.find((x) => x.category.id === cat.id);
+      txt += env ? (env.left >= 0 ? `: ti restano ${eur(env.left)} del limite.` : `: hai superato il limite di ${eur(-env.left)}.`) : '.';
+      return reply(q, txt, [{ label: 'Apri Formichina', href: FORMICHINA }]);
+    }
+    if (/oggi.*speso|speso.*oggi/.test(t)) return reply(q, c.spentToday ? `Oggi hai speso ${eur(c.spentToday)}.` : 'Oggi non hai ancora speso niente.');
+    if (/mese|ciclo|stipendio|resta|rimane|rimangono/.test(t) && !/oggi/.test(t)) {
+      return reply(q, `In questo ciclo hai speso ${eur(c.variableTotal)} di spese variabili. Ti restano ${eur(c.remaining)} per ${c.daysLeft} ${c.daysLeft === 1 ? 'giorno' : 'giorni'}, fino al prossimo stipendio.`, [{ label: 'Apri Formichina', href: FORMICHINA }]);
+    }
+    let txt;
+    if (c.leftToday >= 0) txt = `Oggi puoi spendere ancora ${eur(c.leftToday)}` + (c.spentToday ? `: ne hai già spesi ${eur(c.spentToday)} su ${eur(c.budgetToday)}.` : '.');
+    else txt = `Oggi hai sforato di ${eur(-c.leftToday)}.` + (c.tomorrow !== null ? ` Domani avrai ${eur(c.tomorrow)}.` : '');
+    if (c.leftToday >= 0 && c.tomorrow !== null && c.spentToday) txt += ` Se ti fermi qui, domani avrai ${eur(c.tomorrow)}.`;
+    return reply(q, txt, [{ label: 'Apri Formichina', href: FORMICHINA }]);
+  }
+
+  // ---------- Cervello IA: conversazione libera ----------
+  // Le domande che non sono comandi vanno al "cervello" (il servizio Cloudflare in /cervello), che ricorda
+  // gli ultimi scambi: così si può fare un vero dialogo. Dopo 15 minuti di silenzio si riparte da capo.
+  let hist = [], histAt = 0;
+  let lastPlanText = '';
+  async function askBrain(q) {
+    if (Date.now() - histAt > 15 * 60 * 1000) hist = [];
+    histAt = Date.now();
+    hist.push({ role: 'user', content: q });
+    const now = new Date();
+    const ctx = [
+      'Data e ora: ' + now.toLocaleString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) + '.',
+      wxText ? 'Meteo a Verona est: ' + wxText : '',
+      lastPlanText ? 'Piano pasti di oggi: ' + lastPlanText : '',
+      st.prio.filter((p) => !p.done).length ? 'Priorità aperte: ' + st.prio.filter((p) => !p.done).map((p) => p.text).join('; ') + '.' : '',
+      st.step ? 'Passo di stasera per l\'entrata secondaria: ' + st.step : '',
+    ].filter(Boolean).join('\n');
+    $('status').textContent = 'Ci penso…';
+    try {
+      const r = await fetch(st.brain, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: hist.slice(-16), context: ctx }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        hist.pop();
+        if (r.status === 429) return reply(q, 'Per oggi ho finito le risposte gratuite dell\'IA. Domani riparto, oppure chiedi a Claude.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
+        if (r.status === 404) return reply(q, 'L\'indirizzo del cervello non è valido. Controllalo nel pannello Comandi.');
+        return reply(q, 'Il cervello non risponde in questo momento. Riprova tra poco.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
+      }
+      hist.push({ role: 'assistant', content: j.text });
+      if (hist.length > 24) hist = hist.slice(-16);
+      return reply(q, j.text);
+    } catch {
+      hist.pop();
+      return reply(q, 'Non riesco a raggiungere il cervello: controlla la connessione.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
+    }
+  }
 
   // ---------- Riconoscimento comandi ----------
   const CATS = [
@@ -424,23 +571,50 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   }
   const fsStr = (doc, k) => (doc && doc.fields && doc.fields[k] && doc.fields[k].stringValue) || null;
 
-  // Il piano: prima dall'account collegato, poi dalla memoria di questo browser, se c'è.
-  async function getPiano() {
+  // I dati del ricettario (piano, spesa, dispensa): prima dall'account collegato, poi dalla memoria di questo browser.
+  const LOCAL_KEYS = { piano: 'ricettario_piano_v1', spesa: 'ricettario_spesa_check_v1', dispensa: 'ricettario_dispensa_v1' };
+  async function getFamily(names) {
+    const out = {};
     if (st.fb && st.fb.refresh) {
       try {
         const u = await fsGet('users/' + st.fb.uid);
         const fid = fsStr(u, 'fid');
         if (!fid) return { err: 'nofamily' };
-        const doc = await fsGet('families/' + fid + '/state/piano');
-        const raw = fsStr(doc, 'json');
-        return { piano: raw ? JSON.parse(raw) : {} };
+        await Promise.all(names.map(async (n) => {
+          const raw = fsStr(await fsGet('families/' + fid + '/state/' + n), 'json');
+          out[n] = raw ? JSON.parse(raw) : null;
+        }));
+        return out;
       } catch (e) {
         if (e.dead) { st.fb = null; save(); renderLink(); return { err: 'expired' }; }
         return { err: 'offline' };
       }
     }
-    try { const raw = localStorage.getItem('ricettario_piano_v1'); if (raw) return { piano: JSON.parse(raw) }; } catch {}
-    return { err: 'nolink' };
+    let any = false;
+    names.forEach((n) => { try { const raw = localStorage.getItem(LOCAL_KEYS[n]); out[n] = raw ? JSON.parse(raw) : null; if (raw) any = true; } catch { out[n] = null; } });
+    return any ? out : { err: 'nolink' };
+  }
+  async function getPiano() {
+    const r = await getFamily(['piano']);
+    return r.err ? r : { piano: r.piano || {} };
+  }
+
+  // Lista della spesa: la stessa che calcola il ricettario dal piano, meno la dispensa e le voci già spuntate.
+  async function getSpesa() {
+    const r = await getFamily(['piano', 'spesa', 'dispensa']);
+    if (r.err) return r;
+    const piano = r.piano || {}, checked = r.spesa || {};
+    let disp = r.dispensa;
+    if (!disp) { disp = {}; ['sale', "olio extravergine d'oliva"].forEach((x) => { disp[RicLista.normalize(x)] = true; }); }
+    const lines = [], titles = [];
+    Object.keys(piano).forEach((slot) => {
+      const a = piano[slot]; const rec = a && !a.special && !a.customText ? byNums(a.cnum, a.rnum) : null;
+      if (!rec) return;
+      titles.push(rec.title);
+      rec.ing.forEach((x) => lines.push({ text: x, recipeTitle: rec.title }));
+    });
+    const items = RicLista.build(lines, disp).filter((it) => !checked[it.key]);
+    return { items, titles };
   }
   const PIANO_ERR = {
     nolink: 'Non riesco ancora a leggere il piano. Collega il ricettario una volta sola dal pannello Comandi.',
@@ -474,6 +648,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     const res = await getPiano();
     if (res.err) { ul.innerHTML = ''; const li = document.createElement('li'); li.className = 'empty'; li.style.display = 'block'; li.textContent = PIANO_ERR[res.err]; ul.appendChild(li); return; }
     const d = dayPlan(res.piano, DAYK[new Date().getDay()]); ul.innerHTML = '';
+    lastPlanText = [d.pranzo && 'pranzo ' + d.pranzo.text, d.cena && 'cena ' + d.cena.text, d.contorno && 'contorno ' + d.contorno.text].filter(Boolean).join(', ');
     [['Pranzo', d.pranzo], ['Cena', d.cena], ['Contorno', d.contorno]].forEach(([k, v]) => {
       if (k === 'Contorno' && !v) return;
       const li = document.createElement('li'); const b = document.createElement('b'); b.textContent = k;
@@ -493,10 +668,48 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       [{ label: 'Apri la ricetta', href: recipeUrl(r) }]);
   }
 
+  // Voci aggiunte a voce ("aggiungi latte alla spesa"): restano in Jarvis e si sommano alla lista del ricettario.
+  function splitItems(x) { return x.split(/,|\se\s|\sed\s|\sanche\s/).map((y) => y.replace(/^\s*(il|lo|la|i|gli|le|un|una|uno|del|della|dello|dei|degli|delle|anche)\s+/i, '').trim()).filter(Boolean); }
+  function handleExtra(q, t) {
+    let m = t.match(/^(?:aggiungi|metti|segna|scrivi)\s+(.+?)\s+(?:alla|nella|in)\s+(?:lista\s+(?:della|per la)\s+)?spesa$/) || t.match(/^(?:devo comprare|compra|comprare)\s+(.+)$/);
+    if (m) {
+      const add = splitItems(m[1]);
+      add.forEach((x) => { if (!st.extra.some((e) => RicLista.normalize(e) === RicLista.normalize(x))) st.extra.push(x); });
+      save(); renderExtra();
+      return reply(q, `Aggiunto alla spesa: ${add.join(', ')}.`), true;
+    }
+    m = t.match(/^(?:togli|rimuovi|cancella|elimina)\s+(.+?)\s+dalla\s+(?:lista\s+(?:della\s+)?)?spesa$/) || t.match(/^ho (?:gi[aà] )?(?:comprato|preso)\s+(?!\d)(.+)$/);
+    if (m) {
+      const del = splitItems(m[1]).map((x) => RicLista.normalize(x));
+      const before = st.extra.length;
+      st.extra = st.extra.filter((e) => !del.some((d) => RicLista.normalize(e).includes(d) || d.includes(RicLista.normalize(e))));
+      save(); renderExtra();
+      return reply(q, before !== st.extra.length ? 'Fatto, tolto dalla spesa.' : 'Non era tra le cose aggiunte da te. Quelle del piano si spuntano nel ricettario.',
+        before !== st.extra.length ? [] : [{ label: 'Apri la lista', href: RICETTARIO + '#/spesa' }]), true;
+    }
+    return false;
+  }
+  async function handleSpesa(q) {
+    const res = await getSpesa();
+    const extra = st.extra.slice();
+    if (res.err && !extra.length) return reply(q, PIANO_ERR[res.err], [{ label: 'Apri la lista', href: RICETTARIO + '#/spesa' }]);
+    const items = res.err ? [] : res.items;
+    if (!items.length && !extra.length) return reply(q, 'La lista della spesa è vuota: hai già tutto, oppure il piano è vuoto.', [{ label: 'Apri il piano', href: RICETTARIO + '#/piano' }]);
+    const groups = {};
+    items.forEach((it) => { (groups[it.cat] = groups[it.cat] || []).push(it.label); });
+    const parts = Object.keys(groups).map((c) => `${c}: ${groups[c].join(', ')}`);
+    if (extra.length) parts.push('aggiunte da te: ' + extra.join(', '));
+    const n = items.length + extra.length;
+    return reply(q, `Ti servono ${n} ${n === 1 ? 'cosa' : 'cose'}. ` + parts.join('. ') + '.', [{ label: 'Apri la lista', href: RICETTARIO + '#/spesa' }]);
+  }
+
   async function handleFood(q, t) {
+    if (handleExtra(q, t)) return;
     $('status').textContent = 'Controllo il ricettario…';
     try { await loadBook(); } catch { $('status').textContent = 'Pronto'; return reply(q, 'Non riesco a raggiungere il ricettario in questo momento. Riprova tra poco.'); }
     $('status').textContent = 'Pronto';
+
+    if (/lista (della|per la) spesa|cosa (devo|dobbiamo|c.?e da) comprare|cosa (manca|serve) (da comprare|per la spesa)|^spesa$|cosa compro|la spesa/.test(t)) return handleSpesa(q);
 
     // Cosa cucino con X e Y
     const m = t.match(/(?:cucin\w*|prepar\w*|fare|faccio|mangi\w*)\s+con\s+(.+)$/) || t.match(/^(?:ricett\w*|piatti?)\s+con\s+(.+)$/);
@@ -567,6 +780,9 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     const t = q.toLowerCase();
     let m;
 
+    // Budget di Formichina
+    if (/quanto (posso|riesco a) spendere|quanto (mi )?(resta|rimane)|budget|quanto ho speso|quanti soldi|soldi (mi )?(restano|rimangono)/.test(t)) return handleBudget(q, t);
+
     // Spese ed entrate
     const isIncome = /\b(incassat|guadagnat|ricevut|entrata di|mi hanno pagato)/.test(t);
     const isExpense = /\b(speso|spesa di|pagato|comprato|ho preso)\b/.test(t);
@@ -601,7 +817,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
     // Ricettario e piano
     if (/ricettario/.test(t) && /^(apri|mostra)/.test(t)) return reply(q, 'Ecco il ricettario.', [{ label: 'Apri Ricettario', href: RICETTARIO }]);
-    if (/ricett|ingredient|piano|mangi|cucin|cena|pranzo|contorno|come si (fa|prepara)|cosa c.? per/.test(t)) return handleFood(q, t);
+    if (/ricett|ingredient|piano|mangi|cucin|cena|pranzo|contorno|come si (fa|prepara)|cosa c.? per|spesa\b|comprare|^compra|ho (gi[aà] )?(comprato|preso) (?!\d)/.test(t)) return handleFood(q, t);
 
     // Entrata secondaria
     if ((m = q.match(/^\s*passo\s*[:,]\s*(.+)$/i))) { st.step = m[1].trim(); save(); renderStep(); return reply(q, 'Passo di stasera impostato.'); }
@@ -611,7 +827,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     if (/che ore/.test(t)) return reply(q, 'Sono le ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + '.');
     if (/che giorno|che data/.test(t)) return reply(q, 'Oggi è ' + new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) + '.');
     if (/meteo|piove|pioggia|temperatura/.test(t)) return reply(q, wxText || 'Il meteo non è ancora disponibile, riprova tra un momento.');
-    if (/^(apri )?formichina|budget|movimenti/.test(t)) return reply(q, 'Ecco Formichina.', [{ label: 'Apri Formichina', href: FORMICHINA }]);
+    if (/^(apri )?formichina|movimenti/.test(t)) return reply(q, 'Ecco Formichina.', [{ label: 'Apri Formichina', href: FORMICHINA }]);
     if (/le mie idee|leggi le (idee|note)/.test(t)) {
       const last = st.notes.slice(0, 3);
       return reply(q, last.length ? 'Le ultime: ' + last.map((n) => n.text).join('. ') + '.' : 'Non hai ancora note.');
@@ -619,35 +835,64 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     if (/^(aiuto|cosa sai fare|comandi)/.test(t)) { show('comandi'); return reply(q, 'Ecco cosa so fare. Per tutto il resto chiedo a Claude.'); }
     if (/^(ciao|buongiorno|buonasera|ehi)/.test(t)) return reply(q, greet() + ', Marco. Dimmi pure.');
 
-    // Tutto il resto: Claude
+    // Tutto il resto: il cervello IA, se collegato; altrimenti Claude
+    if (/^(nuova conversazione|ricominciamo|ricomincia|cambiamo argomento)\b/.test(t)) { hist = []; return reply(q, 'D\'accordo, ricominciamo. Dimmi pure.'); }
+    if (st.brain) return askBrain(q);
     return reply(q, 'Questa la giro a Claude. Ti preparo la domanda già scritta.',
       [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
   }
 
-  // ---------- Microfono ----------
+  // ---------- Microfono e dialogo ----------
+  // Si parla, Jarvis capisce da solo quando hai finito (una breve pausa), risponde e torna ad ascoltare.
+  // Il dialogo si chiude con "basta", "grazie" o "ok grazie", oppure se per qualche secondo non dici nulla.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const STOPS = /^(basta|stop|fine|grazie|ok grazie|grazie mille|va bene grazie|niente|nient'altro|a posto|chiudi)\b[.!]?$/i;
   let rec = null;
-  $('mic').addEventListener('click', () => {
-    unlockSpeech();
-    if (!SR) { $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
-    if (rec) { rec.stop(); return; }
+  const micUi = (on) => { document.body.classList.toggle('listening', on); $('micLbl').textContent = on ? 'Ascolto' : (convo ? 'Dialogo' : 'Parla'); };
+  function listen(auto = false) {
+    if (!SR) { convo = false; $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
+    if (rec) return;
+    let txt = '', errCode = '', silenceT = null, idleT = null;
+    const finish = () => { try { rec && rec.stop(); } catch {} };
     try {
-      rec = new SR(); rec.lang = 'it-IT'; rec.interimResults = true; rec.maxAlternatives = 1;
-      document.body.classList.add('listening'); $('micLbl').textContent = 'Ascolto'; $('status').textContent = 'Ti ascolto…';
-      let final = '';
+      rec = new SR(); rec.lang = 'it-IT'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
       rec.onresult = (e) => {
-        let txt = ''; for (const r of e.results) txt += r[0].transcript;
-        $('cmd').value = txt; if (e.results[e.results.length - 1].isFinal) final = txt;
+        txt = Array.from(e.results).map((r) => r[0].transcript).join(' ').replace(/\s+/g, ' ').trim();
+        $('cmd').value = txt;
+        clearTimeout(idleT); clearTimeout(silenceT);
+        silenceT = setTimeout(finish, 1300);          // 1,3 secondi di silenzio: hai finito di parlare
       };
-      rec.onerror = (e) => { $('status').textContent = e.error === 'not-allowed' ? 'Permesso microfono negato: scrivi il comando' : 'Non ho sentito bene, riprova'; };
+      rec.onerror = (e) => { errCode = e.error || ''; };
       rec.onend = () => {
-        document.body.classList.remove('listening'); $('micLbl').textContent = 'Parla'; rec = null;
-        if (final) { $('status').textContent = 'Pronto'; handle(final); $('cmd').value = ''; }
+        clearTimeout(idleT); clearTimeout(silenceT); rec = null;
+        const said = txt.trim(); $('cmd').value = '';
+        if (!said) {
+          convo = false; micUi(false);
+          $('status').textContent = errCode === 'not-allowed'
+            ? (auto ? 'Tocca il cerchio per rispondere' : 'Permesso microfono negato: scrivi il comando')
+            : (auto ? 'Dialogo chiuso. Tocca il cerchio per riprendere' : 'Non ho sentito niente, riprova');
+          return;
+        }
+        if (STOPS.test(said)) { convo = false; micUi(false); reply(said, 'Va bene. Sono qui se ti serve.'); return; }
+        micUi(false); $('status').textContent = 'Ci penso…';
+        handle(said);
       };
       rec.start();
-    } catch { rec = null; document.body.classList.remove('listening'); $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; }
+      micUi(true); $('status').textContent = auto ? 'Ti ascolto… (di\' "basta" per chiudere)' : 'Ti ascolto…';
+      idleT = setTimeout(finish, auto ? 7000 : 9000);  // nessuna parola: chiudo
+    } catch {
+      rec = null; convo = false; micUi(false);
+      $('status').textContent = auto ? 'Tocca il cerchio per rispondere' : 'Microfono non disponibile qui: scrivi il comando';
+    }
+  }
+  $('mic').addEventListener('click', () => {
+    unlockSpeech();
+    if (rec) { convo = false; afterSpeak = null; try { rec.stop(); } catch {} return; }   // secondo tocco: smetto di ascoltare
+    afterSpeak = null;
+    try { if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel(); } catch {}
+    convo = true; listen(false);
   });
-  $('cmdForm').addEventListener('submit', (e) => { e.preventDefault(); unlockSpeech(); handle($('cmd').value); $('cmd').value = ''; });
+  $('cmdForm').addEventListener('submit', (e) => { e.preventDefault(); unlockSpeech(); convo = false; handle($('cmd').value); $('cmd').value = ''; });
 
   // ---------- Pannelli ----------
   function show(tab) {
@@ -666,6 +911,16 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       b.setAttribute('aria-label', p.done ? 'Togli da completate' : 'Segna come fatta'); b.textContent = p.done ? '↺' : '✓';
       b.onclick = () => { if (p.done) st.prio.splice(i, 1); else p.done = true; save(); renderPrio(); };
       li.append(s, b); ol.appendChild(li);
+    });
+  }
+  function renderExtra() {
+    const ul = $('extraList'); ul.innerHTML = '';
+    if (!st.extra.length) { ul.innerHTML = '<li class="empty">Niente. Di\' "aggiungi latte alla spesa".</li>'; return; }
+    st.extra.forEach((x, i) => {
+      const li = document.createElement('li'); const d = document.createElement('div'); d.textContent = x;
+      const b = document.createElement('button'); b.className = 'del'; b.type = 'button'; b.textContent = '×'; b.setAttribute('aria-label', 'Togli ' + x);
+      b.onclick = () => { st.extra.splice(i, 1); save(); renderExtra(); };
+      li.append(d, b); ul.appendChild(li);
     });
   }
   function renderStep() { $('step').textContent = st.step || 'Nessun passo impostato. Di\' "passo: …".'; }
@@ -712,6 +967,51 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   });
   $('unlinkBtn').addEventListener('click', () => { st.fb = null; idTok = null; save(); renderLink(); renderTodayPlan(); });
 
+  function renderBrain() {
+    const on = !!st.brain;
+    $('brForm').hidden = on; $('brHelp').hidden = on; $('brRow').hidden = !on;
+    $('brState').textContent = on ? 'collegato' : 'non collegato';
+  }
+  $('brForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = $('brUrl').value.trim().replace(/\/+$/, '');
+    if (!/^https:\/\/.+\/chat$/.test(url)) { $('brMsg').textContent = 'L\'indirizzo deve iniziare con https:// e finire con /chat.'; return; }
+    $('brBtn').disabled = true; $('brMsg').textContent = 'Provo…';
+    try {
+      const r = await fetch(url.replace(/\/chat$/, '/ping'), { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(r.status === 404 ? 'Indirizzo non valido: controlla il TOKEN.' : 'Il servizio non risponde.');
+      if (!j.provider) throw new Error('Il servizio funziona ma manca la chiave dell\'IA (GEMINI_API_KEY o ANTHROPIC_API_KEY).');
+      st.brain = url; save(); $('brMsg').textContent = ''; renderBrain(); hist = [];
+      reply('', 'Cervello collegato. Ora possiamo parlare di quello che vuoi.');
+    } catch (err) { $('brMsg').textContent = err.message && !/fetch|Load failed|NetworkError/i.test(err.message) ? err.message : 'Non riesco a raggiungere l\'indirizzo.'; }
+    $('brBtn').disabled = false;
+  });
+  $('brOff').addEventListener('click', () => { st.brain = null; hist = []; save(); renderBrain(); });
+  function renderFz() {
+    const on = !!st.fz;
+    $('fzForm').hidden = on; $('fzHelp').hidden = on; $('fzRow').hidden = !on;
+    $('fzState').textContent = on ? 'collegata' : 'non collegata';
+  }
+  $('fzForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('fzBtn').disabled = true; $('fzMsg').textContent = 'Controllo…';
+    try {
+      const m = await fLoad();
+      const cfg = m.sync.parseFirebaseConfig($('fzCfg').value);
+      const { docId, keyB64 } = await m.sync.deriveSecret($('fzPass').value.trim());
+      st.fz = { apiKey: cfg.apiKey, projectId: cfg.projectId, docId, keyB64, refresh: null }; fIdTok = null;
+      await fState();
+      save(); $('fzPass').value = ''; $('fzMsg').textContent = ''; renderFz();
+      reply('', 'Formichina collegata. Chiedimi quanto puoi spendere oggi.');
+    } catch (err) {
+      st.fz = null; save();
+      $('fzMsg').textContent = F_ERR[err.code] || (err.message && /graffe|apiKey|JSON|Unexpected/i.test(err.message) ? 'La configurazione non è valida: incolla tutto il blocco firebaseConfig.' : 'Collegamento non riuscito: ' + (err.message || 'errore'));
+    }
+    $('fzBtn').disabled = false;
+  });
+  $('fzOff').addEventListener('click', () => { st.fz = null; fIdTok = null; save(); renderFz(); });
+
   // ---------- Orologio, saluto, meteo ----------
   const greet = () => { const h = new Date().getHours(); return h < 13 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera'; };
   const tick = () => { $('clock').textContent = new Date().toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
@@ -732,8 +1032,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   // ---------- Avvio ----------
   $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO; $('lnkPiano').href = RICETTARIO + '#/piano';
-  renderLink(); renderTodayPlan();
-  renderPrio(); renderStep(); renderNotes();
+  renderLink(); renderTodayPlan(); renderFz(); renderBrain();
+  renderPrio(); renderStep(); renderNotes(); renderExtra();
   $('say').textContent = greet() + ', Marco. Tocca il cerchio e parla, oppure scrivi un comando.';
   try {
     const q = new URLSearchParams(location.search).get('q');
