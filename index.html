@@ -224,7 +224,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     </div>
   <nav class="tabs" role="tablist">
     <button role="tab" id="t-oggi" aria-selected="true" data-tab="oggi">Oggi</button>
-    <button role="tab" id="t-idee" aria-selected="false" data-tab="idee">Idee</button>
+    <button role="tab" id="t-idee" aria-selected="false" data-tab="idee">Memoria</button>
     <button role="tab" id="t-comandi" aria-selected="false" data-tab="comandi">Impostazioni</button>
   </nav>
 
@@ -260,6 +260,23 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   </section>
 
   <section class="pane" id="p-idee" hidden>
+    <div class="block" id="workView" hidden>
+      <h2><span>Creazione</span><button class="btn small" type="button" id="workClose">Chiudi</button></h2>
+      <h3 style="margin:0;font:600 16px var(--body)"></h3>
+      <pre style="white-space:pre-wrap;font:15px/1.6 var(--body);margin:0"></pre>
+    </div>
+    <div class="block">
+      <h2>Progetti <span class="when">quello che Jarvis sa</span></h2>
+      <ul class="notes" id="memProjects"></ul>
+    </div>
+    <div class="block">
+      <h2>Creazioni <span class="when">storie, capitoli, piani</span></h2>
+      <ul class="notes" id="memWorks"></ul>
+    </div>
+    <div class="block">
+      <h2>Ricordi recenti <span class="when">decisioni e cose fatte</span></h2>
+      <ul class="notes" id="memNotes"></ul>
+    </div>
     <div class="block">
       <h2>Da comprare <span class="when">aggiunte a voce</span></h2>
       <ul class="notes" id="extraList"></ul>
@@ -467,8 +484,12 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   let lastVoiceErr = '';
 
   // ---------- Risposta ----------
-  const reply = (you, text, actions = [], kind = '') => {
-    $('status').textContent = 'Pronto';
+  function replyLong(you, full, spoken, who, workId) {
+    reply(you, spoken, workId ? [{ label: 'Apri il testo completo', href: '#', onclick: () => { openDrawer('idee'); openWork(workId); } }] : [], '', who);
+    $('say').textContent = full.length > 1400 ? full.slice(0, 1400) + '…' : full;
+  }
+  const reply = (you, text, actions = [], kind = '', who = '') => {
+    $('status').textContent = who ? 'Agente ' + who : 'Pronto';
     document.body.classList.remove('thinking');
     if (typeof doneAll === 'function') doneAll(st.neural ? 'voce' : '');
     $('you').textContent = you ? '› ' + you : '';
@@ -478,7 +499,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     actions.forEach((a) => {
       const el = document.createElement('a');
       el.className = 'btn' + (a.amber ? ' amber' : ''); el.textContent = a.label; el.href = a.href;
-      el.target = '_blank'; el.rel = 'noopener'; box.appendChild(el);
+      if (a.onclick) { el.addEventListener('click', (ev) => { ev.preventDefault(); a.onclick(); }); } else { el.target = '_blank'; el.rel = 'noopener'; }
+      box.appendChild(el);
     });
     afterSpeak = convo ? () => listen(true) : null;
     speak(text);
@@ -564,8 +586,12 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   // gli ultimi scambi: così si può fare un vero dialogo. Dopo 15 minuti di silenzio si riparte da capo.
   let hist = [], histAt = 0;
   let lastPlanText = '';
-  async function askBrain(q) {
-    work('cervello');
+  const AGENT_NAMES = { generale: 'Jarvis', vendite: 'Vendite', scrittura: 'Scrittura', bambini: 'Bambini', pianificazione: 'Piano', marketing: 'Marketing' };
+  let lastAgent = 'generale';
+  async function askBrain(q, forced) {
+    const agentHint = forced || st.forcedAgent || '';
+    st.forcedAgent = '';
+    work(agentHint && agentHint !== 'generale' ? agentHint : 'cervello');
     if (Date.now() - histAt > 15 * 60 * 1000) hist = [];
     histAt = Date.now();
     hist.push({ role: 'user', content: q });
@@ -579,7 +605,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     ].filter(Boolean).join('\n');
     $('status').textContent = 'Ci penso…';
     try {
-      const r = await fetch(st.brain, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: hist.slice(-16), context: ctx }) });
+      const r = await fetch(st.brain, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: hist.slice(-16), context: ctx, agent: agentHint, prevAgent: lastAgent }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         hist.pop();
@@ -589,12 +615,59 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       }
       hist.push({ role: 'assistant', content: j.text });
       if (hist.length > 24) hist = hist.slice(-16);
-      return reply(q, j.text);
+      lastAgent = j.agent || 'generale';
+      if (j.agent && j.agent !== 'generale') work(j.agent, 2500);
+      if ((j.saved && j.saved.length) || j.workId) { work('memoria', 2500); loadMemory(); }
+      const who = j.agent && j.agent !== 'generale' ? (AGENT_NAMES[j.agent] || j.agent) : '';
+      // Testi lunghi: ne leggo l'inizio e il resto resta nella Memoria
+      if (j.text.length > 650) {
+        const head = (j.text.match(/^[\s\S]{0,420}?[.!?…](\s|$)/) || [j.text.slice(0, 420)])[0].trim();
+        return replyLong(q, j.text, head + (j.workId ? ' … Il testo completo è salvato nella Memoria.' : ' …'), who, j.workId);
+      }
+      return reply(q, j.text, [], '', who);
     } catch {
       hist.pop();
       return reply(q, 'Non riesco a raggiungere il cervello: controlla la connessione.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
     }
   }
+
+  // ---------- Memoria di Jarvis (progetti, note, creazioni) ----------
+  let MEM = { projects: [], notes: [], works: [] };
+  async function loadMemory() {
+    if (!st.brain) return;
+    try { const r = await fetch(brainBase() + '/mem', { cache: 'no-store' }); if (r.ok) { MEM = await r.json(); renderMemory(); } } catch {}
+  }
+  async function memAdd(text, area) {
+    if (!st.brain) return false;
+    try { const r = await fetch(brainBase() + '/mem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'add', text, area }) }); if (r.ok) { loadMemory(); return true; } } catch {}
+    return false;
+  }
+  async function openWork(id) {
+    const box = $('workView'); box.hidden = false; box.querySelector('pre').textContent = 'Carico…';
+    try { const r = await fetch(brainBase() + '/mem/work?id=' + encodeURIComponent(id)); const w = await r.json(); box.querySelector('h3').textContent = w.title || 'Creazione'; box.querySelector('pre').textContent = w.text || ''; box.scrollIntoView({ behavior: 'smooth' }); }
+    catch { box.querySelector('pre').textContent = 'Non riesco a caricarla adesso.'; }
+  }
+  function renderMemory() {
+    const pj = $('memProjects'), nt = $('memNotes'), wk = $('memWorks'); if (!pj) return;
+    pj.innerHTML = ''; nt.innerHTML = ''; wk.innerHTML = '';
+    (MEM.projects || []).forEach((p) => { const li = document.createElement('li'); const d = document.createElement('div');
+      const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = p.status || 'progetto';
+      const b = document.createElement('b'); b.textContent = p.name; const sm = document.createElement('div'); sm.className = 'when'; sm.style.cssText = 'font-family:var(--body);font-size:13px'; sm.textContent = p.summary + (p.next ? ' — Prossimo: ' + p.next : '');
+      d.append(tg, b, sm); li.appendChild(d); pj.appendChild(li); });
+    if (!(MEM.projects || []).length) pj.innerHTML = '<li class="empty">Nessun progetto registrato.</li>';
+    (MEM.notes || []).slice(-20).reverse().forEach((n) => { const li = document.createElement('li'); const d = document.createElement('div');
+      const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = AGENT_NAMES[n.area] || n.area || 'nota';
+      const tx = document.createElement('span'); tx.textContent = n.text; const w = document.createElement('div'); w.className = 'when'; w.textContent = new Date(n.at).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+      d.append(tg, tx, w); li.appendChild(d); nt.appendChild(li); });
+    if (!(MEM.notes || []).length) nt.innerHTML = '<li class="empty">Ancora niente. Di\' "ricorda che…" oppure lavora con gli agenti.</li>';
+    (MEM.works || []).slice().reverse().forEach((w) => { const li = document.createElement('li'); const d = document.createElement('div');
+      const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = AGENT_NAMES[w.agent] || w.agent;
+      const a = document.createElement('a'); a.href = '#'; a.style.color = 'inherit'; a.textContent = w.title; a.onclick = (e) => { e.preventDefault(); openWork(w.id); };
+      d.append(tg, a); li.appendChild(d); wk.appendChild(li); });
+    if (!(MEM.works || []).length) wk.innerHTML = '<li class="empty">Le storie, i capitoli e i testi lunghi creati dagli agenti finiscono qui.</li>';
+  }
+  setTimeout(loadMemory, 1500);
+  $('workClose').addEventListener('click', () => { $('workView').hidden = true; });
 
   // ---------- Richieste a Claude (casella controllata ogni ora) ----------
   const brainBase = () => (st.brain || '').replace(/\/chat$/, '');
@@ -967,6 +1040,18 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     const t = q.toLowerCase();
     let m;
 
+    // Agenti specializzati, chiamati per nome
+    if ((m = q.match(/^\s*(?:agente\s+)?(vendite|scrittura|bambini|pianificazione|piano|marketing)\s*[,:]\s*(.{3,})$/i)) || (m = q.match(/^\s*agente\s+(vendite|scrittura|bambini|pianificazione|piano|marketing)\s+(.{3,})$/i))) {
+      const id = m[1].toLowerCase() === 'piano' ? 'pianificazione' : m[1].toLowerCase();
+      if (!st.brain) return reply(q, 'Gli agenti lavorano con il cervello: collegalo nelle impostazioni.');
+      return askBrain(m[2].trim(), id);
+    }
+    // Memoria: "ricorda che…"
+    if ((m = q.match(/^\s*(?:jarvis,?\s*)?(?:ricorda|ricordati|memorizza|segnati)\s+(?:che\s+)?(.{3,})$/i))) {
+      const text = m[1].trim(); work('memoria');
+      return memAdd(text, 'generale').then((ok) => reply(q, ok ? 'Ricordato.' : 'Non riesco a salvarlo adesso: il cervello non risponde.'));
+    }
+
     // Richieste per Claude
     if ((m = q.match(/^\s*(?:chiedi a claude|di[' ]\s*a claude|dì a claude|manda a claude|passa a claude|fai fare a claude|scrivi a claude|claude)\s*[,:]?\s*(?:di|che|se)?\s*(.{3,})$/i))) return sendToClaude(q, m[1].trim());
     if (/^(cosa ha (risposto|detto) claude|risposte di claude|novità da claude)/.test(t)) {
@@ -994,7 +1079,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     if ((m = q.match(/^\s*(?:jarvis,?\s*)?(idea|nota|annota|appunta|ricordami)\b\s*(?:che|di)?\s*[:,]?\s*(.+)$/i))) {
       const text = m[2].trim();
       const tag = (TAGS.find(([, re]) => re.test(text.toLowerCase())) || [m[1].toLowerCase() === 'idea' ? 'idea' : 'nota'])[0];
-      work('memoria'); st.notes.unshift({ text, tag, at: Date.now() }); save(); renderNotes();
+      work('memoria'); st.notes.unshift({ text, tag, at: Date.now() }); save(); renderNotes(); memAdd('Idea: ' + text, tag);
       return reply(q, `Annotato${tag !== 'idea' && tag !== 'nota' ? ' nel progetto ' + tag : ''}. Hai ${st.notes.length} ${st.notes.length === 1 ? 'nota' : 'note'} salvate.`);
     }
 
@@ -1347,20 +1432,34 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     formichina: '<circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.7 0-2.5 1-2.5 2s1 1.6 2.5 2 2.5 1 2.5 2-.8 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5v1.5M12 16v1.5"/>',
     meteo: '<circle cx="9" cy="9" r="3"/><path d="M9 2v1.5M2 9h1.5M4 4l1 1M14 4l-1 1M8 20h9a3.5 3.5 0 1 0-1-6.9A5 5 0 0 0 8 15a2.5 2.5 0 0 0 0 5z"/>',
     memoria: '<path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/>',
+    vendite: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    scrittura: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
+    bambini: '<circle cx="12" cy="9" r="5"/><path d="M9.5 9h.01M14.5 9h.01M10 11.5c1 .8 3 .8 4 0M7 21c1-3 3-4.5 5-4.5s4 1.5 5 4.5"/>',
+    pianificazione: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h3M8 17h6"/>',
+    marketing: '<path d="M4 10v4l11 5V5L4 10z"/><path d="M15 9a3 3 0 0 1 0 6M7 14l1 5h3"/>',
     claude: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
   };
+  // Toccando un agente, la prossima domanda va direttamente a lui
+  const callAgent = (id, intro) => () => {
+    unlockSpeech();
+    if (!st.brain) { openDrawer('comandi'); return; }
+    st.forcedAgent = id; convo = true;
+    reply('', intro);
+  };
   const MODS = [
-    { id: 'cervello', label: 'Cervello', on: () => !!st.brain, tap: () => openDrawer('comandi') },
+    { id: 'scrittura', label: 'Scrittura', on: () => !!st.brain, tap: callAgent('scrittura', 'Agente scrittura: su cosa lavoriamo?') },
+    { id: 'bambini', label: 'Bambini', on: () => !!st.brain, tap: callAgent('bambini', 'Capitan Scarabocchio è pronto. Che storia scriviamo?') },
+    { id: 'vendite', label: 'Vendite', on: () => !!st.brain, tap: callAgent('vendite', 'Agente vendite: dimmi pure.') },
+    { id: 'marketing', label: 'Marketing', on: () => !!st.brain, tap: callAgent('marketing', 'Agente marketing: cosa promuoviamo?') },
+    { id: 'pianificazione', label: 'Piano', on: () => !!st.brain, tap: callAgent('pianificazione', 'Agente pianificazione: cosa organizziamo?') },
     { id: 'ricettario', label: 'Cucina', on: () => !!(st.fb && st.fb.refresh), tap: () => { unlockSpeech(); handle('cosa mangiamo stasera'); } },
     { id: 'formichina', label: 'Soldi', on: () => !!st.fz, tap: () => { unlockSpeech(); st.fz ? handle('quanto posso spendere oggi') : openDrawer('comandi'); } },
-    { id: 'meteo', label: 'Meteo', on: () => !!wxText, tap: () => { unlockSpeech(); handle('meteo'); } },
-    { id: 'memoria', label: 'Memoria', on: () => true, tap: () => openDrawer('idee') },
-    { id: 'voce', label: 'Voce', on: () => !!st.neural, tap: () => openDrawer('comandi') },
+    { id: 'memoria', label: 'Memoria', on: () => true, tap: () => { openDrawer('idee'); loadMemory(); } },
     { id: 'claude', label: 'Claude', on: () => !!st.brain, tap: () => openDrawer('oggi') },
   ];
   const nodeEl = {};
   MODS.forEach((m) => {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'node'; b.setAttribute('aria-label', m.label);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'node'; b.dataset.id = m.id; b.setAttribute('aria-label', m.label);
     b.innerHTML = `<span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[m.id]}</svg></span><span></span>`;
     b.lastChild.textContent = m.label;
     b.addEventListener('click', m.tap);
