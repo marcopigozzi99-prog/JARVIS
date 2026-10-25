@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0b1220">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -43,6 +43,16 @@ body {
   background-attachment: fixed;
 }
 body::after { content: ""; position: fixed; inset: 0; background: var(--ink); opacity: .82; z-index: -1; pointer-events: none; }
+/* Schermo fisso: niente zoom (doppio tocco, pizzico, ingrandimento dei campi) e niente rotazione. */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overscroll-behavior: none; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, select { font-size: 16px !important; -webkit-user-select: text; user-select: text; }   /* sotto i 16px iPhone ingrandisce la pagina */
+.sheet, .reply .say { -webkit-user-select: text; user-select: text; }
+/* Se il telefono viene girato, l'app gira al contrario e resta ferma, come in verticale */
+html[data-rot] { width: 100vh !important; height: 100vw !important; position: fixed; top: 0; left: 0; overflow: hidden; transform-origin: top left; }
+html[data-rot="l"] { transform: rotate(-90deg) translateX(-100%); }
+html[data-rot="r"] { transform: rotate(90deg) translateY(-100%); }
+
 /* Plancia a schermo intero: il cervello al centro, i moduli in orbita, solo icone in alto. */
 html, body { height: 100%; }
 body { overflow: hidden; }
@@ -1386,8 +1396,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const COL = { idle: [111, 211, 255], wake: [127, 220, 164], listen: [127, 220, 164], think: [242, 180, 90], speak: [140, 225, 255] };
   let cur = COL.idle.slice(), W = 0, H = 0, DPR = 1, rotY = 0, rotX = 0.35, energy = 0, pulses = [];
   function resize() {
-    const r = cv.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
-    W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight; cv.width = W * DPR; cv.height = H * DPR;
     const Ro = Math.min(W * 0.42, H * 0.42);
     MODS.forEach((m, i) => {
       const a = -Math.PI / 2 + (i / MODS.length) * Math.PI * 2;
@@ -1472,6 +1482,25 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     requestAnimationFrame(frame);
   }
   resize(); refreshNodes(); requestAnimationFrame(frame);
+
+  // Blocca lo zoom con due dita e il doppio tocco (iOS ignora user-scalable)
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTouch = 0;
+  document.addEventListener('touchend', (e) => { const now = Date.now(); if (now - lastTouch < 320 && !e.target.closest('input,textarea,select')) e.preventDefault(); lastTouch = now; }, { passive: false });
+  function applyRot() {
+    let a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (typeof window.orientation === 'number' ? window.orientation : 0);
+    a = ((a % 360) + 360) % 360;
+    const phone = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600;
+    const el = document.documentElement;
+    if (phone && a === 90) el.dataset.rot = 'l'; else if (phone && a === 270) el.dataset.rot = 'r'; else delete el.dataset.rot;
+    setTimeout(resize, 60);
+  }
+  window.addEventListener('orientationchange', () => setTimeout(applyRot, 100));
+  if (screen.orientation) screen.orientation.addEventListener('change', applyRot);
+  window.addEventListener('resize', () => setTimeout(applyRot, 100));
+  applyRot();
+  try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(() => {}); } catch {}
 
   // ---------- Avvio ----------
   $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO; $('lnkPiano').href = RICETTARIO + '#/piano';
