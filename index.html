@@ -273,6 +273,15 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <input id="voiceRate" type="range" min="0.8" max="1.2" step="0.02" value="0.98" style="padding:0">
         <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button><span class="note-small" id="voiceInfo"></span></div>
       </form>
+      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="neuralOn"> Voce neurale di Gemini (richiede il cervello collegato)</label>
+        <label class="note-small" for="neuralVoice">Voce: incolla l'identificativo creato con Voice Design (voice_…) oppure scegli una voce pronta</label>
+        <input id="neuralVoice" type="text" placeholder="voice_… oppure Charon" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:13px var(--mono);padding:10px 12px;border-radius:8px;min-width:0">
+        <div class="linkrow" id="neuralPresets"></div>
+        <label class="note-small" for="neuralStyle">Come deve parlare (facoltativo)</label>
+        <input id="neuralStyle" type="text" placeholder="calmo, caldo e rassicurante" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:inherit;padding:10px 12px;border-radius:8px;min-width:0">
+        <div class="linkrow"><button class="btn small" type="button" id="neuralTest">Prova la voce neurale</button><span class="note-small" id="neuralMsg"></span></div>
+      </div>
       <p class="note-small">Per una voce maschile più calda scarica <b>Luca (Avanzata)</b>: Impostazioni › Accessibilità › Contenuti letti › Voci › Italiano › Luca. Poi riapri Jarvis e sceglila qui.</p>
     </div>
     <div class="block">
@@ -347,14 +356,40 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   }
   // Su iPhone la voce parte solo se sbloccata da un tocco: lo faccio al primo tocco sul microfono o su Invia.
   let voiceReady = false;
+  // Lettore unico per la voce neurale: su iPhone va "sbloccato" con un tocco, poi può parlare da solo.
+  const player = new Audio(); player.preload = 'auto'; player.setAttribute('playsinline', '');
+  const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
   const unlockSpeech = () => {
-    if (voiceReady || !('speechSynthesis' in window)) return;
-    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); voiceReady = true; } catch {}
+    if (voiceReady) return;
+    voiceReady = true;
+    try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch {}
+    try { player.src = SILENT; const pr = player.play(); if (pr) pr.catch(() => {}); } catch {}
   };
   // Dialogo: dopo che Jarvis ha parlato, se la conversazione è aperta torna ad ascoltare da solo.
   let convo = false, afterSpeak = null;
   const runAfterSpeak = () => { document.body.classList.remove('speaking'); if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 250); } };
-  const speak = (text) => {
+  // Voce neurale di Gemini (se attiva e il cervello è collegato); in caso di problemi, voce dell'iPhone.
+  let neuralOffUntil = 0, lastUrl = null;
+  const neuralOn = () => st.neural && st.brain && Date.now() > neuralOffUntil;
+  async function speakNeural(text, onFail) {
+    try {
+      document.body.classList.add('speaking');
+      const r = await fetch(st.brain.replace(/\/chat$/, '/speak'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.slice(0, 1200), voice: st.neuralVoice || 'Charon', style: st.neuralStyle || '' }) });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 429) neuralOffUntil = Date.now() + 60 * 60 * 1000;   // limite: per un'ora uso la voce dell'iPhone
+        throw new Error(j.error || 'voce ' + r.status);
+      }
+      const blob = await r.blob();
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(blob);
+      player.onended = runAfterSpeak; player.onerror = () => onFail('riproduzione');
+      player.src = lastUrl;
+      await player.play();
+    } catch (e) { onFail(e.message || 'errore'); }
+  }
+  const speakDevice = (text) => {
     try {
       if (!('speechSynthesis' in window)) { runAfterSpeak(); return; }
       speechSynthesis.cancel();
@@ -366,6 +401,13 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       speechSynthesis.speak(u);
     } catch { runAfterSpeak(); }
   };
+  const speak = (text) => {
+    try { player.pause(); } catch {}
+    try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch {}
+    if (neuralOn()) speakNeural(text, (why) => { lastVoiceErr = why; speakDevice(text); });
+    else speakDevice(text);
+  };
+  let lastVoiceErr = '';
 
   // ---------- Risposta ----------
   const reply = (you, text, actions = [], kind = '') => {
@@ -1013,7 +1055,26 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   $('voiceSel').addEventListener('change', () => { st.voiceName = $('voiceSel').value; save(); pickVoice(); unlockSpeech(); speak('Ciao Marco, questa è la mia nuova voce.'); });
   $('voicePitch').addEventListener('change', () => { st.voicePitch = parseFloat($('voicePitch').value); save(); });
   $('voiceRate').addEventListener('change', () => { st.voiceRate = parseFloat($('voiceRate').value); save(); });
-  $('voiceTest').addEventListener('click', () => { unlockSpeech(); speak('Buonasera Marco. Sono Jarvis, a tua disposizione.'); });
+  $('voiceTest').addEventListener('click', () => { unlockSpeech(); speakDevice('Buonasera Marco. Sono Jarvis, a tua disposizione.'); });
+  // Voce neurale
+  const PRESETS = ['Charon', 'Orus', 'Algenib', 'Gacrux', 'Sadaltager', 'Iapetus', 'Algieba', 'Sulafat'];
+  PRESETS.forEach((n) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small'; b.textContent = n;
+    b.onclick = () => { $('neuralVoice').value = n; st.neuralVoice = n; save(); $('neuralTest').click(); }; $('neuralPresets').appendChild(b); });
+  $('neuralOn').checked = !!st.neural; $('neuralVoice').value = st.neuralVoice || ''; $('neuralStyle').value = st.neuralStyle || '';
+  $('neuralOn').addEventListener('change', () => { st.neural = $('neuralOn').checked; neuralOffUntil = 0; save(); });
+  $('neuralVoice').addEventListener('change', () => { st.neuralVoice = $('neuralVoice').value.trim(); save(); });
+  $('neuralStyle').addEventListener('change', () => { st.neuralStyle = $('neuralStyle').value.trim(); save(); });
+  $('neuralTest').addEventListener('click', () => {
+    unlockSpeech();
+    if (!st.brain) { $('neuralMsg').textContent = 'Prima collega il cervello qui sotto.'; return; }
+    st.neuralVoice = $('neuralVoice').value.trim(); st.neuralStyle = $('neuralStyle').value.trim(); save();
+    $('neuralMsg').textContent = 'Genero l\'audio…'; lastVoiceErr = '';
+    try { speechSynthesis.cancel(); } catch {}
+    speakNeural('Buonasera Marco. Sono Jarvis: i sistemi sono pronti, e io sono a tua disposizione.', (why) => {
+      $('neuralMsg').textContent = why === 'limite' ? 'Limite gratuito della voce raggiunto per ora.' : /voice|not found|invalid/i.test(why) ? 'Voce non trovata: controlla l\'identificativo (deve essere dello stesso progetto della chiave).' : 'Non riuscito: ' + why;
+      runAfterSpeak();
+    }).then(() => { if (!lastVoiceErr && $('neuralMsg').textContent.startsWith('Genero')) $('neuralMsg').textContent = st.neural ? 'Ok, Jarvis parla con questa voce.' : 'Ti piace? Attiva la spunta qui sopra per usarla sempre.'; });
+  });
   function renderBrain() {
     const on = !!st.brain;
     $('brForm').hidden = on; $('brHelp').hidden = on; $('brRow').hidden = !on;

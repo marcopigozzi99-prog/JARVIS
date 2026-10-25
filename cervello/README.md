@@ -33,3 +33,9 @@ Nel Comando Rapido "Jarvis", azione **Ottieni contenuti di URL**:
 - Campi: `q` (testo) = Testo dettato; `history` (testo) = la variabile Storia
 
 Poi **Ottieni valore dizionario** per la chiave `text` e **Pronuncia testo**.
+
+## 5. Voce neurale (Gemini TTS)
+
+Il cervello ha anche l'indirizzo `/speak`: riceve `{ text, voice, style }` e restituisce l'audio WAV.
+- `voice`: una voce pronta (es. `Charon`, `Orus`, `Algenib`) oppure l'identificativo `voice_…` creato con **Voice Design** in Google AI Studio (aistudio.google.com/generate-speech), nello stesso progetto della chiave.
+- In Jarvis: Comandi › Voce › Voce neurale di Gemini.

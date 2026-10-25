@@ -97,6 +97,50 @@ async function askGeminiModel(env, model, system, messages) {
   return parts.map((p) => p.text || '').join('').trim();
 }
 
+// ---------- Voce (Gemini TTS) ----------
+// La voce può essere una delle voci già pronte (es. "Charon") oppure una voce creata con Voice Design
+// in Google AI Studio (un identificativo "voice_…", dello stesso progetto della chiave).
+const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts', 'gemini-3.1-flash-tts-preview'];
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+function pcmToWav(pcm, rate = 24000) {
+  const h = new DataView(new ArrayBuffer(44));
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) h.setUint8(o + i, str.charCodeAt(i)); };
+  w(0, 'RIFF'); h.setUint32(4, 36 + pcm.length, true); w(8, 'WAVE'); w(12, 'fmt ');
+  h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true);
+  h.setUint32(24, rate, true); h.setUint32(28, rate * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true);
+  w(36, 'data'); h.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length); out.set(new Uint8Array(h.buffer), 0); out.set(pcm, 44);
+  return out;
+}
+async function speakGemini(env, text, voice, style) {
+  const list = env.TTS_MODEL ? [env.TTS_MODEL, ...TTS_MODELS] : TTS_MODELS;
+  let last;
+  for (const model of list) {
+    const item = { type: 'text', text };
+    if (style) item.annotations = [{ type: 'speech_metadata', style }];
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify({ model, input: [{ type: 'user_input', content: [item] }], response_format: { type: 'audio' }, generation_config: { speech_config: [{ voice }] } }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 429) { const e = new Error('limite'); e.status = 429; throw e; }
+    if (!r.ok) {
+      const e = new Error((j.error && j.error.message) || 'Voce ' + r.status); e.status = r.status; last = e;
+      if (r.status === 404 && !/voice/i.test(e.message) || /model.*(not found|not supported|not available)/i.test(e.message)) continue;
+      throw e;
+    }
+    let audio = null;
+    for (const st of j.steps || []) if (st.type === 'model_output') for (const c of st.content || []) if (c.type === 'audio' && c.data) audio = c;
+    if (!audio && j.output_audio && j.output_audio.data) audio = j.output_audio;
+    if (!audio) { last = new Error('Nessun audio nella risposta'); continue; }
+    let bytes = b64ToBytes(audio.data), mime = audio.mime_type || 'audio/wav';
+    if (/l16|pcm/i.test(mime) || !(bytes[0] === 0x52 && bytes[1] === 0x49)) { const m = /rate=(\d+)/.exec(mime); bytes = pcmToWav(bytes, m ? +m[1] : 24000); mime = 'audio/wav'; }
+    return { bytes, mime };
+  }
+  throw last || new Error('Voce non disponibile');
+}
+
 // Dal Comando Rapido di iPhone: { q: "domanda", history: "Marco: …\nJarvis: …" }
 function fromShortcut(body) {
   const msgs = [];
@@ -126,6 +170,20 @@ export default {
       } catch (e) {
         const msg = /API key|API_KEY|invalid|permission|unauth/i.test(String(e.message)) ? 'La chiave dell\'IA non è valida: ricopiala in Cloudflare.' : /limite/.test(String(e.message)) ? 'Chiave valida, ma per oggi il limite gratuito è finito.' : 'L\'IA ha risposto con un errore: ' + String(e.message).slice(0, 120);
         return json({ ok: false, provider, error: msg }, 200, origin);
+      }
+    }
+    if (action === 'speak' && request.method === 'POST') {
+      if (!env.GEMINI_API_KEY) return json({ error: 'La voce richiede la chiave Gemini' }, 500, origin);
+      let b; try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); }
+      const text = String(b.text || '').slice(0, 1200).trim();
+      if (!text) return json({ error: 'Testo vuoto' }, 400, origin);
+      const voice = String(b.voice || env.GEMINI_VOICE || 'Charon').slice(0, 120);
+      const style = String(b.style || '').slice(0, 300);
+      try {
+        const { bytes, mime } = await speakGemini(env, text, voice, style);
+        return new Response(bytes, { status: 200, headers: { 'content-type': mime, 'cache-control': 'no-store', ...cors(origin) } });
+      } catch (e) {
+        return json({ error: e.status === 429 ? 'limite' : String(e.message).slice(0, 200) }, e.status === 429 ? 429 : 502, origin);
       }
     }
     if (action !== 'chat' || request.method !== 'POST') return json({ error: 'Non trovato' }, 404, origin);
