@@ -93,7 +93,7 @@ async function askGeminiModel(env, model, system, messages, maxTokens = 500) {
   if (r.status === 429) throw new Error('limite');
   if (!r.ok) {
     const e = new Error((j.error && j.error.message) || 'Gemini ' + r.status);
-    e.tryNext = r.status === 404 || /not found|not supported|is not available|deprecated/i.test(e.message);
+    e.tryNext = r.status === 404 || r.status >= 500 || /not found|not supported|is not available|deprecated|high demand|overloaded|unavailable/i.test(e.message);
     throw e;
   }
   const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
