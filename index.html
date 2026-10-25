@@ -348,6 +348,18 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       </form>
       <div class="linkrow" id="fzRow" hidden><span class="note-small ok">Formichina collegata</span><button class="btn small" type="button" id="fzOff">Scollega</button></div>
     </div>
+    <details class="block" id="micHelp">
+      <summary><b>Jarvis non sente la voce?</b></summary>
+      <ol class="note-small" style="padding-left:18px;line-height:1.6">
+        <li><b>Dettatura accesa</b>: Impostazioni › Generali › Tastiera › <i>Abilita Dettatura</i>. Senza questa, Jarvis non capisce le parole.</li>
+        <li><b>Lingua</b>: nella stessa pagina, <i>Lingue della dettatura</i> deve avere l'Italiano.</li>
+        <li><b>Microfono</b>: Impostazioni › App › Safari › Microfono › <i>Consenti</i>.</li>
+        <li><b>Tempo di utilizzo</b>: se è attivo, Impostazioni › Tempo di utilizzo › Restrizioni contenuti e privacy › Microfono › <i>Consenti modifiche</i>.</li>
+        <li>Chiudi Jarvis (scorri via dall'elenco delle app) e riaprilo. Tocca il cerchio e parla quando vedi "Ti ascolto…".</li>
+      </ol>
+      <button class="btn small" type="button" id="micTest">Prova il microfono</button>
+      <p class="note-small" id="micTestOut"></p>
+    </details>
     <details class="block">
       <summary><h2 style="display:inline">Cosa capisco</h2></summary>
       <dl class="cmds">
@@ -1129,6 +1141,13 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const STOPS = /^(basta|stop|fine|grazie|ok grazie|grazie mille|va bene grazie|niente|nient'altro|a posto|chiudi)\b[.!]?$/i;
   let rec = null;
+  const MIC_ERR = {
+    'not-allowed': 'Il microfono è bloccato per Jarvis',
+    'service-not-allowed': 'Su iPhone la Dettatura è spenta, e senza Dettatura il riconoscimento della voce non funziona',
+    'audio-capture': 'Il microfono è occupato da un\'altra app o da una chiamata',
+    'network': 'Per capire la voce serve internet: controlla la connessione',
+    'language-not-supported': 'La lingua della Dettatura non è l\'italiano',
+  };
   const micUi = (on) => { document.body.classList.toggle('listening', on); $('micLbl').textContent = on ? 'Ascolto' : (convo ? 'Dialogo' : 'Parla'); };
   function listen(auto = false) {
     if (!SR) { convo = false; $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
@@ -1150,9 +1169,9 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         const said = txt.trim(); $('cmd').value = '';
         if (!said) {
           convo = false; micUi(false); setTimeout(resumeWake, 300);
-          $('status').textContent = errCode === 'not-allowed'
-            ? (auto ? 'Tocca il cerchio per rispondere' : 'Permesso microfono negato: scrivi il comando')
-            : (auto ? 'Dialogo chiuso. Tocca il cerchio per riprendere' : 'Non ho sentito niente, riprova');
+          $('status').textContent = MIC_ERR[errCode] || (auto ? 'Dialogo chiuso. Tocca il cerchio per riprendere'
+            : errCode && errCode !== 'no-speech' && errCode !== 'aborted' ? 'Il microfono non risponde (' + errCode + '): riprova' : 'Non ho sentito niente, riprova');
+          if (MIC_ERR[errCode] && !auto) reply('', MIC_ERR[errCode] + '.', [{ label: 'Come sistemarlo', href: '#', onclick: () => { openDrawer('comandi'); const d = $('micHelp'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } } }]);
           return;
         }
         if (STOPS.test(said)) { convo = false; micUi(false); reply(said, 'Va bene. Sono qui se ti serve.'); return; }
@@ -1167,6 +1186,28 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       $('status').textContent = auto ? 'Tocca il cerchio per rispondere' : 'Microfono non disponibile qui: scrivi il comando';
     }
   }
+  $('micTest').addEventListener('click', async () => {
+    const out = $('micTestOut'); out.textContent = 'Parla adesso per qualche secondo…';
+    stopWake(true);
+    try {
+      const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ac = new (window.AudioContext || window.webkitAudioContext)(); const an = ac.createAnalyser();
+      ac.createMediaStreamSource(ms).connect(an); const buf = new Uint8Array(an.fftSize); let peak = 0;
+      const t0 = Date.now();
+      await new Promise((ok) => { const loop = () => { an.getByteTimeDomainData(buf); for (const v of buf) peak = Math.max(peak, Math.abs(v - 128)); Date.now() - t0 < 3000 ? requestAnimationFrame(loop) : ok(); }; loop(); });
+      ms.getTracks().forEach((t) => t.stop()); ac.close();
+      if (peak < 4) { out.textContent = 'Il microfono è acceso ma non arriva suono. Controlla che non sia coperto e che non ci siano auricolari collegati.'; return; }
+      out.textContent = 'Microfono OK. Ora provo il riconoscimento delle parole: di\' "ciao Jarvis"…';
+      if (!SR) { out.textContent = 'Microfono OK, ma questo browser non riconosce le parole.'; return; }
+      const r = new SR(); r.lang = 'it-IT'; let got = '', err = '';
+      r.onresult = (e) => { got = Array.from(e.results).map((x) => x[0].transcript).join(' '); };
+      r.onerror = (e) => { err = e.error || ''; };
+      r.onend = () => { out.textContent = got ? 'Tutto a posto: ho capito "' + got + '".' : (MIC_ERR[err] ? MIC_ERR[err] + '. Segui i passi qui sopra.' : 'Il microfono funziona ma le parole non arrivano' + (err ? ' (' + err + ')' : '') + ': controlla la Dettatura al punto 1.'); setTimeout(resumeWake, 300); };
+      r.start(); setTimeout(() => { try { r.stop(); } catch {} }, 5000);
+    } catch (e) {
+      out.textContent = /NotAllowed|denied/i.test(String(e && (e.name || e.message))) ? 'Il microfono è bloccato: segui il punto 3 (e il 4 se usi Tempo di utilizzo).' : 'Non riesco ad aprire il microfono: ' + (e && e.message || e);
+    }
+  });
   // ---------- "Jarvis": ascolto continuo della parola di attivazione ----------
   // Con l'app aperta resta in ascolto: quando sente "Jarvis" si sveglia. Si può dire tutto insieme
   // ("Jarvis, cosa mangiamo stasera?") oppure solo "Jarvis" e poi la domanda dopo il segnale.
