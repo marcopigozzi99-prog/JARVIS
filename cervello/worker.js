@@ -151,7 +151,13 @@ function fromShortcut(body) {
   msgs.push({ role: 'user', content: String(body.q) });
   return msgs;
 }
-const nowRome = () => new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+// Ora italiana calcolata a mano (ora legale UE: dall'ultima domenica di marzo all'ultima di ottobre, alle 01:00 UTC)
+const nowRome = () => {
+  const d = new Date(), y = d.getUTCFullYear();
+  const lastSun = (m) => { const t = new Date(Date.UTC(y, m + 1, 0, 1)); t.setUTCDate(t.getUTCDate() - t.getUTCDay()); return t; };
+  const off = d >= lastSun(2) && d < lastSun(9) ? 2 : 1;
+  return new Date(d.getTime() + off * 3600e3).toLocaleString('it-IT', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+};
 
 export default {
   async fetch(request, env) {

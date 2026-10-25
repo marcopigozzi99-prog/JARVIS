@@ -71,6 +71,7 @@ header.top { display: flex; justify-content: space-between; align-items: baselin
 .mic svg { width: 30px; height: 30px; }
 .listening .mic { animation: pulse 1.2s ease-in-out infinite; border-color: var(--amber); color: var(--amber); }
 .status { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; min-height: 1.5em; text-align: center; }
+.waking .mic { box-shadow: 0 0 18px rgba(127, 220, 164, .35); border-color: var(--ok); color: var(--ok); }
 .speaking .mic { box-shadow: 0 0 40px rgba(111, 211, 255, .55); }
 .speaking .ring .spin { animation-duration: 6s; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -274,6 +275,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button><span class="note-small" id="voiceInfo"></span></div>
       </form>
       <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="wakeOn"> Ascolto continuo: rispondi quando dico "Jarvis"</label>
+        <p class="note-small" style="margin:0">Con l'app aperta resta in ascolto e lo schermo resta acceso. All'apertura basta un tocco sul cerchio per accendere il microfono (regola di iPhone). Consuma più batteria.</p>
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
         <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="neuralOn"> Voce neurale di Gemini (richiede il cervello collegato)</label>
         <label class="note-small" for="neuralVoice">Voce: incolla l'identificativo creato con Voice Design (voice_…) oppure scegli una voce pronta</label>
         <input id="neuralVoice" type="text" placeholder="voice_… oppure Charon" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:13px var(--mono);padding:10px 12px;border-radius:8px;min-width:0">
@@ -367,7 +372,11 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   };
   // Dialogo: dopo che Jarvis ha parlato, se la conversazione è aperta torna ad ascoltare da solo.
   let convo = false, afterSpeak = null;
-  const runAfterSpeak = () => { document.body.classList.remove('speaking'); if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 250); } };
+  const runAfterSpeak = () => {
+    document.body.classList.remove('speaking');
+    if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 250); }
+    else if (typeof resumeWake === 'function') setTimeout(resumeWake, 400);   // fine risposta: torno ad aspettare "Jarvis"
+  };
   // Voce neurale di Gemini (se attiva e il cervello è collegato); in caso di problemi, voce dell'iPhone.
   let neuralOffUntil = 0, lastUrl = null;
   const neuralOn = () => st.neural && st.brain && Date.now() > neuralOffUntil;
@@ -927,6 +936,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   function listen(auto = false) {
     if (!SR) { convo = false; $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
     if (rec) return;
+    stopWake(true);
     let txt = '', errCode = '', silenceT = null, idleT = null;
     const finish = () => { try { rec && rec.stop(); } catch {} };
     try {
@@ -942,7 +952,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         clearTimeout(idleT); clearTimeout(silenceT); rec = null;
         const said = txt.trim(); $('cmd').value = '';
         if (!said) {
-          convo = false; micUi(false);
+          convo = false; micUi(false); setTimeout(resumeWake, 300);
           $('status').textContent = errCode === 'not-allowed'
             ? (auto ? 'Tocca il cerchio per rispondere' : 'Permesso microfono negato: scrivi il comando')
             : (auto ? 'Dialogo chiuso. Tocca il cerchio per riprendere' : 'Non ho sentito niente, riprova');
@@ -960,9 +970,80 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       $('status').textContent = auto ? 'Tocca il cerchio per rispondere' : 'Microfono non disponibile qui: scrivi il comando';
     }
   }
+  // ---------- "Jarvis": ascolto continuo della parola di attivazione ----------
+  // Con l'app aperta resta in ascolto: quando sente "Jarvis" si sveglia. Si può dire tutto insieme
+  // ("Jarvis, cosa mangiamo stasera?") oppure solo "Jarvis" e poi la domanda dopo il segnale.
+  // Su iPhone il microfono va acceso con un tocco all'apertura dell'app: dopo, non serve più toccare.
+  const WAKE = /\b(jarvis|jarvi|giarvis|jarvys|jervis|gervis|jarvish|giarvi|charvis|garvis)\b[\s,.!?:]*/i;
+  let wakeRec = null, wakeWanted = false, wakeBlocked = false, wakeFails = 0, wakeLock = null, wakeHandled = false;
+  const wakeOn = () => !!st.wake && !!SR;
+  async function keepScreenOn() {
+    try { if ('wakeLock' in navigator && !wakeLock && document.visibilityState === 'visible') { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch {}
+  }
+  function wakeUi() {
+    const on = !!wakeRec;
+    document.body.classList.toggle('waking', on);
+    if (on && !rec && !document.body.classList.contains('speaking')) { $('micLbl').textContent = 'Jarvis'; $('status').textContent = 'In attesa: di\' "Jarvis"…'; }
+  }
+  function stopWake(temporary) {
+    if (!temporary) wakeWanted = false;
+    const r = wakeRec; wakeRec = null;
+    if (r) { r.onend = null; r.onresult = null; r.onerror = null; try { r.abort(); } catch {} }
+    document.body.classList.remove('waking');
+  }
+  function startWake() {
+    if (!wakeOn() || wakeRec || rec || document.hidden || convo) return;
+    if (document.body.classList.contains('speaking')) return;
+    wakeWanted = true; wakeHandled = false;
+    let errCode = '';
+    try {
+      const r = new SR(); r.lang = 'it-IT'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+      r.onresult = (e) => {
+        if (wakeHandled) return;
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript.trim();
+          const m = t.match(WAKE);
+          if (!m) continue;
+          const after = t.slice(m.index + m[0].length).trim();
+          if (!e.results[i].isFinal && after.length < 3) continue;   // aspetto di capire se segue una domanda
+          wakeHandled = true; wakeFails = 0;
+          stopWake(true);
+          unlockSpeech();
+          convo = true;
+          if (after.length > 2) { $('status').textContent = 'Ci penso…'; handle(after); }
+          else { reply('Jarvis', 'Dimmi.'); }
+          return;
+        }
+      };
+      r.onerror = (e) => { errCode = e.error || ''; };
+      r.onend = () => {
+        if (wakeRec !== r) return;
+        wakeRec = null; document.body.classList.remove('waking');
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          wakeFails++;
+          if (wakeFails >= 2) { wakeBlocked = true; $('micLbl').textContent = 'Parla'; $('status').textContent = 'Tocca il cerchio una volta per accendere l\'ascolto di "Jarvis".'; return; }
+        }
+        if (wakeWanted && !wakeHandled) setTimeout(startWake, errCode === 'no-speech' || !errCode ? 150 : 1200);  // iPhone chiude ogni tanto: riapro
+      };
+      wakeRec = r;
+      r.start();
+      wakeUi(); keepScreenOn();
+    } catch { wakeRec = null; wakeBlocked = true; $('status').textContent = 'Tocca il cerchio una volta per accendere l\'ascolto di "Jarvis".'; }
+  }
+  function resumeWake() { if (wakeOn() && !convo && !rec) startWake(); }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { stopWake(true); }
+    else { keepScreenOn(); if (wakeOn() && !wakeBlocked) setTimeout(startWake, 400); }
+  });
+
   $('mic').addEventListener('click', () => {
     unlockSpeech();
+    if (wakeOn() && (wakeBlocked || !wakeRec) && !rec && !convo) {          // primo tocco: accendo l'ascolto continuo
+      wakeBlocked = false; wakeFails = 0; startWake();
+      if (wakeRec) { reply('', 'Sono in ascolto. Chiamami "Jarvis" quando ti serve.'); return; }
+    }
     if (rec) { convo = false; afterSpeak = null; try { rec.stop(); } catch {} return; }   // secondo tocco: smetto di ascoltare
+    stopWake(true);
     afterSpeak = null;
     try { if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel(); } catch {}
     convo = true; listen(false);
@@ -1060,6 +1141,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const PRESETS = ['Charon', 'Orus', 'Algenib', 'Gacrux', 'Sadaltager', 'Iapetus', 'Algieba', 'Sulafat'];
   PRESETS.forEach((n) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small'; b.textContent = n;
     b.onclick = () => { $('neuralVoice').value = n; st.neuralVoice = n; save(); $('neuralTest').click(); }; $('neuralPresets').appendChild(b); });
+  $('wakeOn').checked = st.wake !== false;
+  $('wakeOn').addEventListener('change', () => { st.wake = $('wakeOn').checked; save(); if (st.wake) { wakeBlocked = false; startWake(); } else { stopWake(false); micUi(false); $('status').textContent = 'Pronto'; try { wakeLock && wakeLock.release(); } catch {} } });
   $('neuralOn').checked = !!st.neural; $('neuralVoice').value = st.neuralVoice || ''; $('neuralStyle').value = st.neuralStyle || '';
   $('neuralOn').addEventListener('change', () => { st.neural = $('neuralOn').checked; neuralOffUntil = 0; save(); });
   $('neuralVoice').addEventListener('change', () => { st.neuralVoice = $('neuralVoice').value.trim(); save(); });
@@ -1143,7 +1226,9 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO; $('lnkPiano').href = RICETTARIO + '#/piano';
   renderLink(); renderTodayPlan(); renderFz(); renderBrain(); pickVoice();
   renderPrio(); renderStep(); renderNotes(); renderExtra();
-  $('say').textContent = greet() + ', Marco. Tocca il cerchio e parla, oppure scrivi un comando.';
+  if (st.wake === undefined) { st.wake = true; save(); }
+  $('say').textContent = greet() + ', Marco. ' + (wakeOn() ? 'Chiamami "Jarvis" quando ti serve.' : 'Tocca il cerchio e parla, oppure scrivi un comando.');
+  setTimeout(() => { if (wakeOn()) { startWake(); setTimeout(() => { if (!wakeRec && !rec && !convo) { wakeBlocked = true; $('status').textContent = 'Tocca il cerchio una volta per accendere l\'ascolto di "Jarvis".'; } }, 2500); } }, 600);
   try {
     const q = new URLSearchParams(location.search).get('q');
     if (q) { handle(q); history.replaceState(null, '', location.pathname); }
