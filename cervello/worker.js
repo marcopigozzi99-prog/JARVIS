@@ -28,7 +28,7 @@ Non puoi registrare spese, leggere il ricettario o cambiare nulla: quelle cose l
 
 const cors = (origin) => ({
   'access-control-allow-origin': ORIGINS.includes(origin) ? origin : ORIGINS[0],
-  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-headers': 'content-type',
   'access-control-max-age': '86400',
   'vary': 'origin',
@@ -141,6 +141,44 @@ async function speakGemini(env, text, voice, style) {
   throw last || new Error('Voce non disponibile');
 }
 
+// ---------- Casella per Claude ----------
+// Jarvis lascia qui le richieste per Claude (KV "INBOX"); un'attività programmata di Claude le legge
+// ogni ora, le svolge e scrive la risposta, che Jarvis poi legge a voce.
+async function inboxGet(env) { try { return JSON.parse((await env.INBOX.get('items')) || '[]'); } catch { return []; } }
+async function inboxPut(env, items) { await env.INBOX.put('items', JSON.stringify(items.slice(-60))); }
+const plain = (s, status, origin) => new Response(s, { status: status || 200, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...cors(origin) } });
+async function inboxRoute(request, env, url, sub, origin) {
+  if (!env.INBOX) return json({ error: 'Casella non configurata (manca il KV INBOX)' }, 500, origin);
+  if (!sub && request.method === 'POST') {
+    let b; try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); }
+    const text = String(b.text || '').trim().slice(0, 2000);
+    if (!text) return json({ error: 'Testo vuoto' }, 400, origin);
+    const items = await inboxGet(env);
+    const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, at: new Date().toISOString(), status: 'new', reply: '' };
+    items.push(item); await inboxPut(env, items);
+    return json({ ok: true, id: item.id }, 200, origin);
+  }
+  if (sub === 'list') { const items = await inboxGet(env); return json({ items: items.slice(-20) }, 200, origin); }
+  if (sub === 'pending') {
+    // ?take=1: le richieste lette passano a "presa in carico", così l'ora dopo non vengono rilette
+    const all = await inboxGet(env), take = url.searchParams.get('take');
+    const items = all.filter((x) => (take ? x.status === 'new' : x.status !== 'done'));
+    if (!items.length) return plain('NESSUNA RICHIESTA IN ATTESA', 200, origin);
+    if (take) { items.forEach((x) => { x.status = 'taken'; x.takenAt = new Date().toISOString(); }); await inboxPut(env, all); }
+    return plain(items.map((x) => `ID: ${x.id}\nRICEVUTA: ${x.at}\nTESTO: ${x.text}`).join('\n---\n'), 200, origin);
+  }
+  if (sub === 'reply') {
+    const id = url.searchParams.get('id'), text = String(url.searchParams.get('text') || '').slice(0, 3000);
+    if (!id || !text) return plain('ERRORE: servono id e text', 400, origin);
+    const items = await inboxGet(env); const it = items.find((x) => x.id === id);
+    if (!it) return plain('ERRORE: richiesta non trovata', 404, origin);
+    it.reply = text; it.status = 'done'; it.repliedAt = new Date().toISOString();
+    await inboxPut(env, items);
+    return plain('OK: risposta salvata per ' + id, 200, origin);
+  }
+  return json({ error: 'Non trovato' }, 404, origin);
+}
+
 // Dal Comando Rapido di iPhone: { q: "domanda", history: "Marco: …\nJarvis: …" }
 function fromShortcut(body) {
   const msgs = [];
@@ -164,7 +202,7 @@ export default {
     const origin = request.headers.get('origin') || '';
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
     const url = new URL(request.url);
-    const [token, action] = url.pathname.split('/').filter(Boolean);
+    const [token, action, sub] = url.pathname.split('/').filter(Boolean);
     if (!env.TOKEN || !sameToken(token, env.TOKEN)) return json({ error: 'Indirizzo non valido' }, 404, origin);
     if (action === 'ping') {
       const provider = env.ANTHROPIC_API_KEY ? 'claude' : env.GEMINI_API_KEY ? 'gemini' : null;
@@ -178,6 +216,7 @@ export default {
         return json({ ok: false, provider, error: msg }, 200, origin);
       }
     }
+    if (action === 'claude') return inboxRoute(request, env, url, sub, origin);
     if (action === 'speak' && request.method === 'POST') {
       if (!env.GEMINI_API_KEY) return json({ error: 'La voce richiede la chiave Gemini' }, 500, origin);
       let b; try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); }

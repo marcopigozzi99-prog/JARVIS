@@ -220,6 +220,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   <section class="pane" id="p-oggi">
     <div class="block">
+      <h2>Richieste a Claude <span class="when">controllo ogni ora, 7-23</span></h2>
+      <ul class="notes" id="claudeList"><li class="empty">Nessuna richiesta.</li></ul>
+    </div>
+    <div class="block">
       <h2>Meteo <span class="when" id="wxPlace">Verona est</span></h2>
       <div class="wx" id="wx"><span class="empty">Caricamento meteo…</span></div>
     </div>
@@ -334,6 +338,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <div><dt>cosa cucino con zucchine e uova</dt><dd>Cerco tra le 318 ricette quelle con quegli ingredienti.</dd></div>
         <div><dt>meteo · che ore sono · che giorno è</dt><dd>Risposte rapide.</dd></div>
         <div><dt>apri formichina · apri ricettario</dt><dd>Apre le tue app.</dd></div>
+        <div><dt>Claude, aggiorna la scheda del giardino · chiedi a Claude un piano per la settimana</dt><dd>Passo la richiesta a Claude: la legge entro un'ora, la svolge con i suoi strumenti e ti risponde con una notifica e qui.</dd></div>
         <div><dt>qualsiasi altra domanda</dt><dd>Se il cervello IA è collegato, ti rispondo io e possiamo continuare il discorso. Altrimenti la giro a Claude, già scritta.</dd></div>
         <div><dt>basta · grazie · nuova conversazione</dt><dd>Chiude il dialogo vocale, oppure riparte da capo con un altro argomento.</dd></div>
       </dl>
@@ -580,6 +585,55 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       return reply(q, 'Non riesco a raggiungere il cervello: controlla la connessione.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
     }
   }
+
+  // ---------- Richieste a Claude (casella controllata ogni ora) ----------
+  const brainBase = () => (st.brain || '').replace(/\/chat$/, '');
+  let claudeItems = [];
+  if (!Array.isArray(st.heard)) st.heard = [];
+  async function sendToClaude(q, text) {
+    if (!st.brain) return reply(q, 'Per passare richieste a Claude serve il cervello collegato. Lo trovi nelle impostazioni.');
+    work('claude');
+    try {
+      const r = await fetch(brainBase() + '/claude', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'errore');
+      pollClaude();
+      return reply(q, 'Fatto, l\'ho passato a Claude. Entro un\'ora ricevi una notifica, e la risposta te la leggo anche qui.');
+    } catch (e) { return reply(q, 'Non sono riuscito a passarlo a Claude: ' + (e.message || 'errore') + '. Riprova tra poco.'); }
+  }
+  const STATUS_LBL = { new: 'in coda', taken: 'Claude ci lavora', done: 'risposta pronta' };
+  function renderClaude() {
+    const ul = $('claudeList'); if (!ul) return;
+    ul.innerHTML = '';
+    const items = claudeItems.slice(-5).reverse();
+    if (!items.length) { ul.innerHTML = '<li class="empty">Nessuna richiesta. Di\' "Claude, …" o "chiedi a Claude …".</li>'; return; }
+    items.forEach((it) => {
+      const li = document.createElement('li'); const d = document.createElement('div');
+      const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = STATUS_LBL[it.status] || it.status;
+      const tx = document.createElement('span'); tx.textContent = it.text;
+      d.append(tg, tx);
+      if (it.reply) { const rp = document.createElement('div'); rp.className = 'when'; rp.style.cssText = 'color:var(--fg);font-family:var(--body);font-size:14px;margin-top:6px'; rp.textContent = it.reply; d.appendChild(rp); }
+      li.appendChild(d); ul.appendChild(li);
+    });
+  }
+  async function pollClaude() {
+    if (!st.brain || document.hidden) return;
+    try {
+      const r = await fetch(brainBase() + '/claude/list', { cache: 'no-store' });
+      if (!r.ok) return;
+      claudeItems = (await r.json()).items || [];
+      renderClaude();
+      if (claudeItems.some((x) => x.status !== 'done')) work('claude'); else done('claude');
+      const fresh = claudeItems.find((x) => x.status === 'done' && x.reply && !st.heard.includes(x.id));
+      if (fresh && !rec && !convo && !document.body.classList.contains('speaking') && !document.body.classList.contains('thinking')) {
+        st.heard.push(fresh.id); st.heard = st.heard.slice(-60); save();
+        reply('Claude', 'Claude ha risposto: ' + fresh.reply);
+      }
+    } catch {}
+  }
+  setInterval(pollClaude, 60000);
+  setTimeout(pollClaude, 3000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(pollClaude, 800); });
 
   // ---------- Riconoscimento comandi ----------
   const CATS = [
@@ -902,6 +956,13 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     document.body.classList.add('thinking');
     const t = q.toLowerCase();
     let m;
+
+    // Richieste per Claude
+    if ((m = q.match(/^\s*(?:chiedi a claude|di[' ]\s*a claude|dì a claude|manda a claude|passa a claude|fai fare a claude|scrivi a claude|claude)\s*[,:]?\s*(?:di|che|se)?\s*(.{3,})$/i))) return sendToClaude(q, m[1].trim());
+    if (/^(cosa ha (risposto|detto) claude|risposte di claude|novità da claude)/.test(t)) {
+      const last = claudeItems.filter((x) => x.reply).slice(-1)[0];
+      return reply(q, last ? 'L\'ultima risposta di Claude: ' + last.reply : (claudeItems.length ? 'Claude non ha ancora risposto: ci sta lavorando.' : 'Non hai richieste aperte con Claude.'));
+    }
 
     // Budget di Formichina
     if (/quanto (posso|riesco a) spendere|quanto (mi )?(resta|rimane)|budget|quanto ho speso|quanti soldi|soldi (mi )?(restano|rimangono)/.test(t)) return handleBudget(q, t);
@@ -1274,6 +1335,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     formichina: '<circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.7 0-2.5 1-2.5 2s1 1.6 2.5 2 2.5 1 2.5 2-.8 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5v1.5M12 16v1.5"/>',
     meteo: '<circle cx="9" cy="9" r="3"/><path d="M9 2v1.5M2 9h1.5M4 4l1 1M14 4l-1 1M8 20h9a3.5 3.5 0 1 0-1-6.9A5 5 0 0 0 8 15a2.5 2.5 0 0 0 0 5z"/>',
     memoria: '<path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/>',
+    claude: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
   };
   const MODS = [
     { id: 'cervello', label: 'Cervello', on: () => !!st.brain, tap: () => openDrawer('comandi') },
@@ -1282,6 +1344,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     { id: 'meteo', label: 'Meteo', on: () => !!wxText, tap: () => { unlockSpeech(); handle('meteo'); } },
     { id: 'memoria', label: 'Memoria', on: () => true, tap: () => openDrawer('idee') },
     { id: 'voce', label: 'Voce', on: () => !!st.neural, tap: () => openDrawer('comandi') },
+    { id: 'claude', label: 'Claude', on: () => !!st.brain, tap: () => openDrawer('oggi') },
   ];
   const nodeEl = {};
   MODS.forEach((m) => {
