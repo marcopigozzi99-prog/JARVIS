@@ -586,7 +586,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   // gli ultimi scambi: così si può fare un vero dialogo. Dopo 15 minuti di silenzio si riparte da capo.
   let hist = [], histAt = 0;
   let lastPlanText = '';
-  const AGENT_NAMES = { generale: 'Jarvis', vendite: 'Vendite', scrittura: 'Scrittura', bambini: 'Bambini', pianificazione: 'Piano', marketing: 'Marketing' };
+  const AGENT_NAMES = { generale: 'Jarvis', vendite: 'Vendite', scrittura: 'Scrittura', bambini: 'Bambini', pianificazione: 'Piano', marketing: 'Marketing', grafica: 'Grafica' };
   let lastAgent = 'generale';
   async function askBrain(q, forced) {
     const agentHint = forced || st.forcedAgent || '';
@@ -1041,7 +1041,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     let m;
 
     // Agenti specializzati, chiamati per nome
-    if ((m = q.match(/^\s*(?:agente\s+)?(vendite|scrittura|bambini|pianificazione|piano|marketing)\s*[,:]\s*(.{3,})$/i)) || (m = q.match(/^\s*agente\s+(vendite|scrittura|bambini|pianificazione|piano|marketing)\s+(.{3,})$/i))) {
+    if ((m = q.match(/^\s*(?:agente\s+)?(vendite|scrittura|bambini|pianificazione|piano|marketing|grafica)\s*[,:]\s*(.{3,})$/i)) || (m = q.match(/^\s*agente\s+(vendite|scrittura|bambini|pianificazione|piano|marketing|grafica)\s+(.{3,})$/i))) {
       const id = m[1].toLowerCase() === 'piano' ? 'pianificazione' : m[1].toLowerCase();
       if (!st.brain) return reply(q, 'Gli agenti lavorano con il cervello: collegalo nelle impostazioni.');
       return askBrain(m[2].trim(), id);
@@ -1432,6 +1432,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     formichina: '<circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.7 0-2.5 1-2.5 2s1 1.6 2.5 2 2.5 1 2.5 2-.8 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5v1.5M12 16v1.5"/>',
     meteo: '<circle cx="9" cy="9" r="3"/><path d="M9 2v1.5M2 9h1.5M4 4l1 1M14 4l-1 1M8 20h9a3.5 3.5 0 1 0-1-6.9A5 5 0 0 0 8 15a2.5 2.5 0 0 0 0 5z"/>',
     memoria: '<path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/>',
+    grafica: '<circle cx="12" cy="12" r="8.5"/><circle cx="8.5" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="15.5" cy="10" r="1.2"/><path d="M12 20.5c-1.5 0-2-1-1.5-2.2.6-1.3 2.2-1.3 3-2.3"/>',
     vendite: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
     scrittura: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
     bambini: '<circle cx="12" cy="9" r="5"/><path d="M9.5 9h.01M14.5 9h.01M10 11.5c1 .8 3 .8 4 0M7 21c1-3 3-4.5 5-4.5s4 1.5 5 4.5"/>',
@@ -1449,6 +1450,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const MODS = [
     { id: 'scrittura', label: 'Scrittura', on: () => !!st.brain, tap: callAgent('scrittura', 'Agente scrittura: su cosa lavoriamo?') },
     { id: 'bambini', label: 'Bambini', on: () => !!st.brain, tap: callAgent('bambini', 'Capitan Scarabocchio è pronto. Che storia scriviamo?') },
+    { id: 'grafica', label: 'Grafica', on: () => !!st.brain, tap: callAgent('grafica', 'Agente grafica: copertina, illustrazione o logo?') },
     { id: 'vendite', label: 'Vendite', on: () => !!st.brain, tap: callAgent('vendite', 'Agente vendite: dimmi pure.') },
     { id: 'marketing', label: 'Marketing', on: () => !!st.brain, tap: callAgent('marketing', 'Agente marketing: cosa promuoviamo?') },
     { id: 'pianificazione', label: 'Piano', on: () => !!st.brain, tap: callAgent('pianificazione', 'Agente pianificazione: cosa organizziamo?') },
