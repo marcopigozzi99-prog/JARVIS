@@ -83,6 +83,18 @@ async function askGemini(env, system, messages) {
   return parts.map((p) => p.text || '').join('').trim();
 }
 
+// Dal Comando Rapido di iPhone: { q: "domanda", history: "Marco: …\nJarvis: …" }
+function fromShortcut(body) {
+  const msgs = [];
+  String(body.history || '').split('\n').forEach((line) => {
+    const m = line.match(/^(Marco|Jarvis):\s*(.+)$/);
+    if (m) msgs.push({ role: m[1] === 'Jarvis' ? 'assistant' : 'user', content: m[2] });
+  });
+  msgs.push({ role: 'user', content: String(body.q) });
+  return msgs;
+}
+const nowRome = () => new Date().toLocaleString('it-IT', { timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('origin') || '';
@@ -95,9 +107,9 @@ export default {
 
     let body;
     try { body = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); }
-    const messages = cleanMessages(body.messages);
+    const messages = cleanMessages(typeof body.q === 'string' ? fromShortcut(body) : body.messages);
     if (!messages.length) return json({ error: 'Nessun messaggio' }, 400, origin);
-    const context = String(body.context || '').slice(0, 1500);
+    const context = String(body.context || ('Data e ora: ' + nowRome() + '.')).slice(0, 1500);
     const system = SYSTEM + (context ? '\n\nSituazione attuale (dall\'app):\n' + context : '');
 
     try {

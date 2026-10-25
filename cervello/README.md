@@ -24,3 +24,12 @@ Serve perché la chiave non può stare dentro una pagina pubblica: chiunque potr
 L'indirizzo è: `https://jarvis-cervello.<il-tuo-sottodominio>.workers.dev/<TOKEN>/chat`
 
 In Jarvis: **Comandi** › **Cervello IA** › incolla l'indirizzo › **Collega**.
+
+## 4. Usarlo da app chiusa (Comando Rapido)
+
+Nel Comando Rapido "Jarvis", azione **Ottieni contenuti di URL**:
+- URL: lo stesso indirizzo che finisce con `/chat`
+- Metodo: **POST**, Corpo richiesta: **JSON**
+- Campi: `q` (testo) = Testo dettato; `history` (testo) = la variabile Storia
+
+Poi **Ottieni valore dizionario** per la chiave `text` e **Pronuncia testo**.
