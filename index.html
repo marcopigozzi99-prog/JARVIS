@@ -384,7 +384,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     try {
       document.body.classList.add('speaking');
       const r = await fetch(st.brain.replace(/\/chat$/, '/speak'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 1200), voice: st.neuralVoice || 'Charon', style: st.neuralStyle || '' }) });
+        body: JSON.stringify({ text: text.slice(0, 1200), voice: st.neuralVoice || 'voice_kwv0be1dour5', style: st.neuralStyle || '' }) });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         if (r.status === 429) neuralOffUntil = Date.now() + 60 * 60 * 1000;   // limite: per un'ora uso la voce dell'iPhone
@@ -1138,9 +1138,12 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   $('voiceRate').addEventListener('change', () => { st.voiceRate = parseFloat($('voiceRate').value); save(); });
   $('voiceTest').addEventListener('click', () => { unlockSpeech(); speakDevice('Buonasera Marco. Sono Jarvis, a tua disposizione.'); });
   // Voce neurale
-  const PRESETS = ['Charon', 'Orus', 'Algenib', 'Gacrux', 'Sadaltager', 'Iapetus', 'Algieba', 'Sulafat'];
-  PRESETS.forEach((n) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small'; b.textContent = n;
-    b.onclick = () => { $('neuralVoice').value = n; st.neuralVoice = n; save(); $('neuralTest').click(); }; $('neuralPresets').appendChild(b); });
+  const JARVIS_VOICE = 'voice_kwv0be1dour5';   // voce creata con Voice Design (progetto gratuito)
+  const PRESETS = [['Jarvis', JARVIS_VOICE], ['Charon'], ['Orus'], ['Algenib'], ['Gacrux'], ['Sadaltager'], ['Iapetus'], ['Algieba']];
+  PRESETS.forEach(([label, id]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn small' + (id ? ' amber' : ''); b.textContent = label;
+    b.onclick = () => { $('neuralVoice').value = id || label; st.neuralVoice = id || label; save(); $('neuralTest').click(); }; $('neuralPresets').appendChild(b); });
+  // La vecchia voce creata nel progetto a pagamento non funziona più: passo alla nuova, gratuita.
+  if (!st.voiceMigrated) { if (!st.neuralVoice || /^voice_/.test(st.neuralVoice)) st.neuralVoice = JARVIS_VOICE; if (st.neural === undefined) st.neural = true; st.voiceMigrated = 1; save(); }
   $('wakeOn').checked = st.wake !== false;
   $('wakeOn').addEventListener('change', () => { st.wake = $('wakeOn').checked; save(); if (st.wake) { wakeBlocked = false; startWake(); } else { stopWake(false); micUi(false); $('status').textContent = 'Pronto'; try { wakeLock && wakeLock.release(); } catch {} } });
   $('neuralOn').checked = !!st.neural; $('neuralVoice').value = st.neuralVoice || ''; $('neuralStyle').value = st.neuralStyle || '';
