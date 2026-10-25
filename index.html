@@ -266,6 +266,22 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     </div>
     <div class="block">
       <h2>Voce <span class="when" id="voiceNow"></span></h2>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="neuralOn"> <b>Voce di Jarvis</b> (Gemini, quella principale)</label>
+        <label class="note-small" for="neuralVoice">Voce: incolla l'identificativo creato con Voice Design (voice_…) oppure scegli una voce pronta</label>
+        <input id="neuralVoice" type="text" placeholder="voice_… oppure Charon" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:13px var(--mono);padding:10px 12px;border-radius:8px;min-width:0">
+        <div class="linkrow" id="neuralPresets"></div>
+        <label class="note-small" for="neuralStyle">Come deve parlare (facoltativo)</label>
+        <input id="neuralStyle" type="text" placeholder="calmo, caldo e rassicurante" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:inherit;padding:10px 12px;border-radius:8px;min-width:0">
+        <div class="linkrow"><button class="btn small" type="button" id="neuralTest">Prova la voce neurale</button><span class="note-small" id="neuralMsg"></span></div>
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="wakeOn"> Ascolto continuo: rispondi quando dico "Jarvis"</label>
+        <p class="note-small" style="margin:0">Con l'app aperta resta in ascolto e lo schermo resta acceso. All'apertura basta un tocco sul cerchio per accendere il microfono (regola di iPhone). Consuma più batteria.</p>
+      </div>
+      <details style="border-top:1px solid var(--line);padding-top:12px">
+        <summary class="note-small" style="cursor:pointer;color:var(--fg)">Voce di riserva dell'iPhone (usata solo se Gemini non risponde)</summary>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
       <form class="link" id="voiceForm">
         <select id="voiceSel" aria-label="Voce di Jarvis" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:inherit;padding:10px 12px;border-radius:8px;min-width:0"></select>
         <label class="note-small" for="voicePitch">Tono: più grave ← → più acuto</label>
@@ -274,20 +290,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <input id="voiceRate" type="range" min="0.8" max="1.2" step="0.02" value="0.98" style="padding:0">
         <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button><span class="note-small" id="voiceInfo"></span></div>
       </form>
-      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
-        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="wakeOn"> Ascolto continuo: rispondi quando dico "Jarvis"</label>
-        <p class="note-small" style="margin:0">Con l'app aperta resta in ascolto e lo schermo resta acceso. All'apertura basta un tocco sul cerchio per accendere il microfono (regola di iPhone). Consuma più batteria.</p>
-      </div>
-      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
-        <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="neuralOn"> Voce neurale di Gemini (richiede il cervello collegato)</label>
-        <label class="note-small" for="neuralVoice">Voce: incolla l'identificativo creato con Voice Design (voice_…) oppure scegli una voce pronta</label>
-        <input id="neuralVoice" type="text" placeholder="voice_… oppure Charon" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:13px var(--mono);padding:10px 12px;border-radius:8px;min-width:0">
-        <div class="linkrow" id="neuralPresets"></div>
-        <label class="note-small" for="neuralStyle">Come deve parlare (facoltativo)</label>
-        <input id="neuralStyle" type="text" placeholder="calmo, caldo e rassicurante" autocomplete="off" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:inherit;padding:10px 12px;border-radius:8px;min-width:0">
-        <div class="linkrow"><button class="btn small" type="button" id="neuralTest">Prova la voce neurale</button><span class="note-small" id="neuralMsg"></span></div>
-      </div>
-      <p class="note-small">Per una voce maschile più calda scarica <b>Luca (Avanzata)</b>: Impostazioni › Accessibilità › Contenuti letti › Voci › Italiano › Luca. Poi riapri Jarvis e sceglila qui.</p>
+        <p class="note-small" style="margin:0">Qui compaiono solo le voci che iOS mostra alle app web (di solito Alice): Luca e le voci Avanzate non sono disponibili. È normale.</p>
+        </div>
+      </details>
+
     </div>
     <div class="block">
       <h2>Cervello IA <span class="when" id="brState">non collegato</span></h2>
@@ -1129,7 +1135,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     sel.innerHTML = '';
     if (!vs.length) { const o = document.createElement('option'); o.textContent = 'Voce di sistema'; sel.appendChild(o); }
     vs.forEach((v) => { const o = document.createElement('option'); o.value = vid(v); o.textContent = vlabel(v); if (voice && vid(v) === vid(voice)) o.selected = true; sel.appendChild(o); });
-    $('voiceNow').textContent = voice ? vlabel(voice).replace(' · uomo', '') : '';
+    $('voiceNow').textContent = st.neural ? (st.neuralVoice === 'voice_kwv0be1dour5' || !st.neuralVoice ? 'Jarvis' : st.neuralVoice.startsWith('voice_') ? 'personalizzata' : st.neuralVoice) : (voice ? 'iPhone · ' + voice.name : '');
     $('voiceInfo').textContent = vs.length ? `Voci italiane trovate: ${vs.length}` + (vs.some((v) => vq(v) > 0) ? '' : ' (nessuna Avanzata visibile alle app web)') : 'Nessuna voce italiana visibile: riprova tra qualche secondo.';
     $('voicePitch').value = st.voicePitch || 0.9; $('voiceRate').value = st.voiceRate || 0.98;
   }
@@ -1147,8 +1153,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   $('wakeOn').checked = st.wake !== false;
   $('wakeOn').addEventListener('change', () => { st.wake = $('wakeOn').checked; save(); if (st.wake) { wakeBlocked = false; startWake(); } else { stopWake(false); micUi(false); $('status').textContent = 'Pronto'; try { wakeLock && wakeLock.release(); } catch {} } });
   $('neuralOn').checked = !!st.neural; $('neuralVoice').value = st.neuralVoice || ''; $('neuralStyle').value = st.neuralStyle || '';
-  $('neuralOn').addEventListener('change', () => { st.neural = $('neuralOn').checked; neuralOffUntil = 0; save(); });
-  $('neuralVoice').addEventListener('change', () => { st.neuralVoice = $('neuralVoice').value.trim(); save(); });
+  $('neuralOn').addEventListener('change', () => { st.neural = $('neuralOn').checked; neuralOffUntil = 0; save(); renderVoices(); });
+  $('neuralVoice').addEventListener('change', () => { st.neuralVoice = $('neuralVoice').value.trim(); save(); renderVoices(); });
   $('neuralStyle').addEventListener('change', () => { st.neuralStyle = $('neuralStyle').value.trim(); save(); });
   $('neuralTest').addEventListener('click', () => {
     unlockSpeech();
