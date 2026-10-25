@@ -264,6 +264,18 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       <div class="linkrow" id="linkedRow" hidden><span class="note-small ok" id="linkedAs"></span><button class="btn small" type="button" id="unlinkBtn">Scollega</button></div>
     </div>
     <div class="block">
+      <h2>Voce <span class="when" id="voiceNow"></span></h2>
+      <form class="link" id="voiceForm">
+        <select id="voiceSel" aria-label="Voce di Jarvis" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:inherit;padding:10px 12px;border-radius:8px;min-width:0"></select>
+        <label class="note-small" for="voicePitch">Tono: più grave ← → più acuto</label>
+        <input id="voicePitch" type="range" min="0.6" max="1.2" step="0.05" value="0.9" style="padding:0">
+        <label class="note-small" for="voiceRate">Velocità</label>
+        <input id="voiceRate" type="range" min="0.8" max="1.2" step="0.02" value="0.98" style="padding:0">
+        <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button></div>
+      </form>
+      <p class="note-small">Per una voce maschile più calda scarica <b>Luca (Avanzata)</b>: Impostazioni › Accessibilità › Contenuti letti › Voci › Italiano › Luca. Poi riapri Jarvis e sceglila qui.</p>
+    </div>
+    <div class="block">
       <h2>Cervello IA <span class="when" id="brState">non collegato</span></h2>
       <p class="note-small" id="brHelp">Per parlare liberamente con Jarvis serve il suo "cervello": un piccolo servizio gratuito su Cloudflare che custodisce la chiave dell'IA. Quando l'hai creato, incolla qui il suo indirizzo (quello che finisce con /chat).</p>
       <form class="link" id="brForm" autocomplete="off">
@@ -308,9 +320,21 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   // ---------- Voce ----------
   let voice = null;
+  // Voce maschile e calda: preferisco Luca nella versione migliorata (Avanzata/Premium), poi Luca normale,
+  // poi altre voci maschili italiane. Si può scegliere a mano in Comandi › Voce.
+  const MALE = /luca|diego|giorgio|marco|paolo|roberto|cosimo|matteo|lorenzo|fabio|gianni|reed|eddy|rocko|grandpa/i;
+  const BETTER = /premium|enhanced|avanzat|migliorat|neural|natural/i;
+  const itVoices = () => ((window.speechSynthesis && speechSynthesis.getVoices()) || []).filter((v) => /^it/i.test(v.lang));
   const pickVoice = () => {
-    const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
-    voice = vs.find((v) => /it[-_]IT/i.test(v.lang) && /Luca|Alice|Federica/i.test(v.name)) || vs.find((v) => /^it/i.test(v.lang)) || null;
+    const vs = itVoices();
+    const chosen = st.voiceName && vs.find((v) => v.name === st.voiceName);
+    voice = chosen
+      || vs.find((v) => /luca/i.test(v.name) && BETTER.test(v.name))
+      || vs.find((v) => /luca/i.test(v.name))
+      || vs.find((v) => MALE.test(v.name) && BETTER.test(v.name))
+      || vs.find((v) => MALE.test(v.name))
+      || vs[0] || null;
+    if (typeof renderVoices === 'function') renderVoices();
   };
   if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
   // Su iPhone la voce parte solo se sbloccata da un tocco: lo faccio al primo tocco sul microfono o su Invia.
@@ -327,7 +351,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       if (!('speechSynthesis' in window)) { runAfterSpeak(); return; }
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text.replace(/[•·]/g, ',').replace(/—/g, ','));
-      u.lang = 'it-IT'; if (voice) u.voice = voice; u.rate = 1.04;
+      u.lang = 'it-IT'; if (voice) u.voice = voice;
+      u.pitch = st.voicePitch || 0.9; u.rate = st.voiceRate || 0.98;   // un po' più grave e posata
       u.onend = runAfterSpeak; u.onerror = runAfterSpeak;
       document.body.classList.add('speaking');
       speechSynthesis.speak(u);
@@ -967,6 +992,19 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   });
   $('unlinkBtn').addEventListener('click', () => { st.fb = null; idTok = null; save(); renderLink(); renderTodayPlan(); });
 
+  function renderVoices() {
+    const sel = $('voiceSel'); if (!sel) return;
+    const vs = itVoices();
+    sel.innerHTML = '';
+    if (!vs.length) { const o = document.createElement('option'); o.textContent = 'Voce di sistema'; sel.appendChild(o); }
+    vs.forEach((v) => { const o = document.createElement('option'); o.value = v.name; o.textContent = v.name + (MALE.test(v.name) ? ' · uomo' : ''); if (voice && v.name === voice.name) o.selected = true; sel.appendChild(o); });
+    $('voiceNow').textContent = voice ? voice.name : '';
+    $('voicePitch').value = st.voicePitch || 0.9; $('voiceRate').value = st.voiceRate || 0.98;
+  }
+  $('voiceSel').addEventListener('change', () => { st.voiceName = $('voiceSel').value; save(); pickVoice(); unlockSpeech(); speak('Ciao Marco, questa è la mia nuova voce.'); });
+  $('voicePitch').addEventListener('change', () => { st.voicePitch = parseFloat($('voicePitch').value); save(); });
+  $('voiceRate').addEventListener('change', () => { st.voiceRate = parseFloat($('voiceRate').value); save(); });
+  $('voiceTest').addEventListener('click', () => { unlockSpeech(); speak('Buonasera Marco. Sono Jarvis, a tua disposizione.'); });
   function renderBrain() {
     const on = !!st.brain;
     $('brForm').hidden = on; $('brHelp').hidden = on; $('brRow').hidden = !on;
@@ -980,6 +1018,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     try {
       const r = await fetch(url.replace(/\/chat$/, '/ping'), { method: 'POST' });
       const j = await r.json();
+      if (r.ok && j.error) throw new Error(j.error);
       if (!r.ok || !j.ok) throw new Error(r.status === 404 ? 'Indirizzo non valido: controlla il TOKEN.' : 'Il servizio non risponde.');
       if (!j.provider) throw new Error('Il servizio funziona ma manca la chiave dell\'IA (GEMINI_API_KEY o ANTHROPIC_API_KEY).');
       st.brain = url; save(); $('brMsg').textContent = ''; renderBrain(); hist = [];
@@ -1032,7 +1071,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   // ---------- Avvio ----------
   $('lnkF').href = FORMICHINA; $('lnkR').href = RICETTARIO; $('lnkPiano').href = RICETTARIO + '#/piano';
-  renderLink(); renderTodayPlan(); renderFz(); renderBrain();
+  renderLink(); renderTodayPlan(); renderFz(); renderBrain(); pickVoice();
   renderPrio(); renderStep(); renderNotes(); renderExtra();
   $('say').textContent = greet() + ', Marco. Tocca il cerchio e parla, oppure scrivi un comando.';
   try {

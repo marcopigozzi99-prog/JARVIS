@@ -65,8 +65,18 @@ async function askClaude(env, system, messages) {
   return (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
 
+// Modelli gratuiti provati in ordine: se Google ne ritira uno, passa al successivo.
+const GEMINI_MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 async function askGemini(env, system, messages) {
-  const model = env.GEMINI_MODEL || 'gemini-flash-lite-latest';
+  const list = env.GEMINI_MODEL ? [env.GEMINI_MODEL, ...GEMINI_MODELS] : GEMINI_MODELS;
+  let lastErr;
+  for (const model of list) {
+    try { return await askGeminiModel(env, model, system, messages); }
+    catch (e) { lastErr = e; if (!e.tryNext) throw e; }
+  }
+  throw lastErr;
+}
+async function askGeminiModel(env, model, system, messages) {
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
@@ -78,7 +88,11 @@ async function askGemini(env, system, messages) {
   });
   const j = await r.json();
   if (r.status === 429) throw new Error('limite');
-  if (!r.ok) throw new Error((j.error && j.error.message) || 'Gemini ' + r.status);
+  if (!r.ok) {
+    const e = new Error((j.error && j.error.message) || 'Gemini ' + r.status);
+    e.tryNext = r.status === 404 || /not found|not supported|is not available|deprecated/i.test(e.message);
+    throw e;
+  }
   const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
   return parts.map((p) => p.text || '').join('').trim();
 }
@@ -102,7 +116,18 @@ export default {
     const url = new URL(request.url);
     const [token, action] = url.pathname.split('/').filter(Boolean);
     if (!env.TOKEN || !sameToken(token, env.TOKEN)) return json({ error: 'Indirizzo non valido' }, 404, origin);
-    if (action === 'ping') return json({ ok: true, provider: env.ANTHROPIC_API_KEY ? 'claude' : env.GEMINI_API_KEY ? 'gemini' : null }, 200, origin);
+    if (action === 'ping') {
+      const provider = env.ANTHROPIC_API_KEY ? 'claude' : env.GEMINI_API_KEY ? 'gemini' : null;
+      if (!provider) return json({ ok: true, provider: null }, 200, origin);
+      try {   // prova vera: una domanda minuscola, per scoprire subito chiavi sbagliate
+        const test = [{ role: 'user', content: 'Rispondi solo: ok' }];
+        if (provider === 'claude') await askClaude(env, 'Rispondi in una parola.', test); else await askGemini(env, 'Rispondi in una parola.', test);
+        return json({ ok: true, provider }, 200, origin);
+      } catch (e) {
+        const msg = /API key|API_KEY|invalid|permission|unauth/i.test(String(e.message)) ? 'La chiave dell\'IA non è valida: ricopiala in Cloudflare.' : /limite/.test(String(e.message)) ? 'Chiave valida, ma per oggi il limite gratuito è finito.' : 'L\'IA ha risposto con un errore: ' + String(e.message).slice(0, 120);
+        return json({ ok: false, provider, error: msg }, 200, origin);
+      }
+    }
     if (action !== 'chat' || request.method !== 'POST') return json({ error: 'Non trovato' }, 404, origin);
 
     let body;
