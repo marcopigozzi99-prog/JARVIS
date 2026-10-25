@@ -271,7 +271,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <input id="voicePitch" type="range" min="0.6" max="1.2" step="0.05" value="0.9" style="padding:0">
         <label class="note-small" for="voiceRate">Velocità</label>
         <input id="voiceRate" type="range" min="0.8" max="1.2" step="0.02" value="0.98" style="padding:0">
-        <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button></div>
+        <div class="linkrow"><button class="btn small" type="button" id="voiceTest">Prova la voce</button><span class="note-small" id="voiceInfo"></span></div>
       </form>
       <p class="note-small">Per una voce maschile più calda scarica <b>Luca (Avanzata)</b>: Impostazioni › Accessibilità › Contenuti letti › Voci › Italiano › Luca. Poi riapri Jarvis e sceglila qui.</p>
     </div>
@@ -324,19 +324,27 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   // poi altre voci maschili italiane. Si può scegliere a mano in Comandi › Voce.
   const MALE = /luca|diego|giorgio|marco|paolo|roberto|cosimo|matteo|lorenzo|fabio|gianni|reed|eddy|rocko|grandpa/i;
   const BETTER = /premium|enhanced|avanzat|migliorat|neural|natural/i;
-  const itVoices = () => ((window.speechSynthesis && speechSynthesis.getVoices()) || []).filter((v) => /^it/i.test(v.lang));
+  // Su iPhone la versione "Avanzata" spesso ha lo stesso nome ("Luca"): si riconosce dall'identificativo
+  // (voiceURI), che contiene "enhanced" o "premium". Per questo distinguo le voci per voiceURI.
+  const vid = (v) => v.voiceURI || v.name;
+  const vq = (v) => { const id = (v.voiceURI || '') + ' ' + v.name; return /premium/i.test(id) ? 2 : BETTER.test(id) ? 1 : 0; };
+  const vlabel = (v) => v.name.replace(/\s*\((avanzata|enhanced|premium|migliorata)\)/i, '') + (vq(v) === 2 ? ' (Premium)' : vq(v) === 1 ? ' (Avanzata)' : '') + (MALE.test(v.name) ? ' · uomo' : '');
+  const itVoices = () => ((window.speechSynthesis && speechSynthesis.getVoices()) || []).filter((v) => /^it/i.test(v.lang))
+    .sort((a, b) => (MALE.test(b.name) - MALE.test(a.name)) || (vq(b) - vq(a)));
   const pickVoice = () => {
     const vs = itVoices();
-    const chosen = st.voiceName && vs.find((v) => v.name === st.voiceName);
+    const chosen = st.voiceName && vs.find((v) => vid(v) === st.voiceName || v.name === st.voiceName && !vs.some((x) => vid(x) === st.voiceName));
     voice = chosen
-      || vs.find((v) => /luca/i.test(v.name) && BETTER.test(v.name))
+      || vs.find((v) => /luca/i.test(v.name) && vq(v) > 0)
       || vs.find((v) => /luca/i.test(v.name))
-      || vs.find((v) => MALE.test(v.name) && BETTER.test(v.name))
       || vs.find((v) => MALE.test(v.name))
       || vs[0] || null;
     if (typeof renderVoices === 'function') renderVoices();
   };
-  if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  if ('speechSynthesis' in window) {
+    pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
+    [500, 1500, 4000].forEach((ms) => setTimeout(pickVoice, ms));   // iPhone carica l'elenco con calma
+  }
   // Su iPhone la voce parte solo se sbloccata da un tocco: lo faccio al primo tocco sul microfono o su Invia.
   let voiceReady = false;
   const unlockSpeech = () => {
@@ -997,8 +1005,9 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     const vs = itVoices();
     sel.innerHTML = '';
     if (!vs.length) { const o = document.createElement('option'); o.textContent = 'Voce di sistema'; sel.appendChild(o); }
-    vs.forEach((v) => { const o = document.createElement('option'); o.value = v.name; o.textContent = v.name + (MALE.test(v.name) ? ' · uomo' : ''); if (voice && v.name === voice.name) o.selected = true; sel.appendChild(o); });
-    $('voiceNow').textContent = voice ? voice.name : '';
+    vs.forEach((v) => { const o = document.createElement('option'); o.value = vid(v); o.textContent = vlabel(v); if (voice && vid(v) === vid(voice)) o.selected = true; sel.appendChild(o); });
+    $('voiceNow').textContent = voice ? vlabel(voice).replace(' · uomo', '') : '';
+    $('voiceInfo').textContent = vs.length ? `Voci italiane trovate: ${vs.length}` + (vs.some((v) => vq(v) > 0) ? '' : ' (nessuna Avanzata visibile alle app web)') : 'Nessuna voce italiana visibile: riprova tra qualche secondo.';
     $('voicePitch').value = st.voicePitch || 0.9; $('voiceRate').value = st.voiceRate || 0.98;
   }
   $('voiceSel').addEventListener('change', () => { st.voiceName = $('voiceSel').value; save(); pickVoice(); unlockSpeech(); speak('Ciao Marco, questa è la mia nuova voce.'); });
