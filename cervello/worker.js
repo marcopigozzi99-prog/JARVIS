@@ -312,7 +312,7 @@ async function eventsOn(env, from, days = 1) {
   const q = new URLSearchParams({ timeMin: rfc(romeToUtc(from, 0)), timeMax: rfc(romeToUtc(addDays(from, days), 0)), singleEvents: 'true', orderBy: 'startTime', maxResults: '100', timeZone: TZ });
   const j = await gcal(env, `/calendars/${calId(env)}/events?` + q);
   return (j.items || []).filter((e) => e.status !== 'cancelled').map((e) => ({
-    id: e.id, title: e.summary || '(senza titolo)', allDay: !!(e.start && e.start.date),
+    id: e.id, title: e.summary || '(senza titolo)', allDay: !!(e.start && e.start.date), free: e.transparency === 'transparent',
     start: e.start.dateTime ? new Date(e.start.dateTime) : null, end: e.end && e.end.dateTime ? new Date(e.end.dateTime) : null,
     date: e.start.date || (e.start.dateTime ? ymd(new Date(new Date(e.start.dateTime).getTime() + romeOffset(new Date(e.start.dateTime)) * 3600e3)) : ''),
   }));
@@ -322,7 +322,7 @@ function freeSlots(dateStr, events, minMin = 15, outside = false) {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   const wins = dow === 0 || dow === 6 ? CAL_WINDOWS.weekend : CAL_WINDOWS.weekday;
   const nowUtc = new Date();
-  const busy = events.filter((e) => !e.allDay && e.start && e.date === dateStr).map((e) => [e.start.getTime(), e.end.getTime()]).sort((a, b) => a[0] - b[0]);
+  const busy = events.filter((e) => !e.allDay && !e.free && e.start && e.date === dateStr).map((e) => [e.start.getTime(), e.end.getTime()]).sort((a, b) => a[0] - b[0]);
   const out = [];
   for (let [a, b] of wins) {
     if (outside) { a = Math.max(a, OUT_WINDOW[0]); b = Math.min(b, OUT_WINDOW[1]); if (b - a < minMin) continue; }
@@ -412,7 +412,7 @@ async function calendarRoute(request, env, url, sub, origin) {
     if (p.time && /^\d{1,2}:\d\d$/.test(p.time) && !p.flexible) {
       const [h, mi] = p.time.split(':').map(Number); start = romeToUtc(p.date, h * 60 + mi);
       const ev = await eventsOn(env, p.date, 1); const end = new Date(start.getTime() + p.duration * 60e3);
-      const clash = ev.find((e) => !e.allDay && e.start < end && e.end > start);
+      const clash = ev.find((e) => !e.allDay && !e.free && e.start < end && e.end > start);
       return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
         say: `Metto ${title} ${dayName(p.date)} alle ${hhmm(start)}, per ${p.duration} minuti${clash ? ', ma si sovrappone a ' + clash.title : ''}. Confermi?` }, 200, origin);
     }

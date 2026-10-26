@@ -16,7 +16,7 @@ jobs:
       ACCOUNT: e472babdb02755efe426c5ae3fb0cfcb
       SCRIPT: jarvis-cervello
       GCAL_SA: ${{ secrets.GCAL_SA }}
-      GCAL_ID: ${{ secrets.GCAL_ID }}
+      GCAL_ID: ${{ secrets.GCAL_ID || 'marcopigozzi99@gmail.com' }}
     steps:
       - uses: actions/checkout@v4
       - name: Controllo del codice
