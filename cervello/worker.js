@@ -258,6 +258,7 @@ async function inboxRoute(request, env, url, sub, origin) {
 // (di solito la propria email Gmail), condiviso con l'account di servizio con "Apportare modifiche agli eventi".
 const TZ = 'Europe/Rome';
 const CAL_WINDOWS = { weekday: [[18 * 60 + 30, 22 * 60 + 30]], weekend: [[9 * 60, 20 * 60]] };   // spazi per gli impegni
+const OUT_WINDOW = [8 * 60, 20 * 60];   // uscite fuori casa: mai prima delle 8 né dopo le 20, salvo ora detta da Marco
 const romeOffset = (d) => {   // ore di differenza da UTC (ora legale: ultima domenica di marzo -> ultima di ottobre, alle 01:00 UTC)
   const y = d.getUTCFullYear();
   const lastSun = (m) => { const t = new Date(Date.UTC(y, m + 1, 0, 1)); t.setUTCDate(t.getUTCDate() - t.getUTCDay()); return t; };
@@ -316,14 +317,15 @@ async function eventsOn(env, from, days = 1) {
     date: e.start.date || (e.start.dateTime ? ymd(new Date(new Date(e.start.dateTime).getTime() + romeOffset(new Date(e.start.dateTime)) * 3600e3)) : ''),
   }));
 }
-function freeSlots(dateStr, events, minMin = 15) {
+function freeSlots(dateStr, events, minMin = 15, outside = false) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   const wins = dow === 0 || dow === 6 ? CAL_WINDOWS.weekend : CAL_WINDOWS.weekday;
   const nowUtc = new Date();
   const busy = events.filter((e) => !e.allDay && e.start && e.date === dateStr).map((e) => [e.start.getTime(), e.end.getTime()]).sort((a, b) => a[0] - b[0]);
   const out = [];
-  for (const [a, b] of wins) {
+  for (let [a, b] of wins) {
+    if (outside) { a = Math.max(a, OUT_WINDOW[0]); b = Math.min(b, OUT_WINDOW[1]); if (b - a < minMin) continue; }
     let s = Math.max(romeToUtc(dateStr, a).getTime(), nowUtc.getTime() + 10 * 60e3);
     s = Math.ceil(s / (15 * 60e3)) * 15 * 60e3;     // a quarti d'ora
     const e = romeToUtc(dateStr, b).getTime();
@@ -347,7 +349,8 @@ Campi:
 - "time": per add, l'ora "HH:MM" se Marco la dice, altrimenti null (allora cerco io uno spazio libero).
 - "duration": per add, minuti (se non detto: 60; "mezz'ora" = 30; "un'ora e mezza" = 90).
 - "flexible": true se Marco chiede di trovare tu lo spazio ("quando ho tempo", "trova un buco", "piazzalo") oppure non dice l'ora.
-- "within": per add flessibile, giorni entro cui cercare (se non detto: 7).`;
+- "within": per add flessibile, giorni entro cui cercare (se non detto: 7).
+- "outside": true se l'impegno richiede di uscire di casa (dentista, medico, visite, banca, posta, commissioni, negozi, spesa, meccanico, parrucchiere, incontri, appuntamenti fuori, consegne, ritiri); false per attività da fare a casa o in garage (scrivere, studiare, lavorare a un progetto, pulizie, chiamate).`;
 async function calParse(env, text) {
   const r = romeNow();
   const today = ymd(r);
@@ -389,7 +392,7 @@ async function calendarRoute(request, env, url, sub, origin) {
       const parts = [];
       for (let i = 0; i < p.days; i++) {
         const d = addDays(p.date, i), mine = ev.filter((e) => e.date === d);
-        const free = freeSlots(d, ev);
+        const free = freeSlots(d, ev, 15, !!p.outside);
         const freeTxt = free.length ? 'libero ' + free.map((f) => `dalle ${hhmm(f.start)} alle ${hhmm(f.end)}`).join(' e ') : 'nessuno spazio libero nei tuoi orari';
         if (p.action === 'list') parts.push(`${dayName(d)}: ${mine.length ? mine.map(describe).join(', ') : 'niente in calendario'}${p.days === 1 ? '; ' + freeTxt : ''}`);
         else parts.push(`${dayName(d)}: ${freeTxt}`);
@@ -416,10 +419,10 @@ async function calendarRoute(request, env, url, sub, origin) {
     const ev = await eventsOn(env, p.date, p.within);
     for (let i = 0; i < p.within && !start; i++) {
       const d = addDays(p.date, i);
-      const slot = freeSlots(d, ev).find((f) => f.end - f.start >= p.duration * 60e3);
+      const slot = freeSlots(d, ev, 15, !!p.outside).find((f) => f.end - f.start >= p.duration * 60e3);
       if (slot) start = slot.start;
     }
-    if (!start) return json({ action: 'add', say: `Nei prossimi ${p.within} giorni non trovo uno spazio di ${p.duration} minuti nei tuoi orari liberi. Dimmi tu giorno e ora.` }, 200, origin);
+    if (!start) return json({ action: 'add', say: `Nei prossimi ${p.within} giorni non trovo uno spazio di ${p.duration} minuti nei tuoi orari liberi${p.outside ? ' per uscire, tra le 8 e le 20' : ''}. Dimmi tu giorno e ora.` }, 200, origin);
     const end = new Date(start.getTime() + p.duration * 60e3);
     const d = ymd(new Date(start.getTime() + romeOffset(start) * 3600e3));
     return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
