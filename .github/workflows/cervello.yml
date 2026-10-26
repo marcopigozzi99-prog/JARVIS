@@ -1,0 +1,40 @@
+# Pubblica il cervello di Jarvis su Cloudflare a ogni modifica di cervello/worker.js.
+# Serve il segreto del repository CLOUDFLARE_API_TOKEN (modello "Edit Cloudflare Workers").
+# I collegamenti già presenti (chiavi, TOKEN, memoria KV) restano come sono: keep_bindings.
+# Facoltativi: GCAL_SA e GCAL_ID, se presenti vengono copiati nei segreti del cervello.
+name: Pubblica il cervello
+on:
+  push:
+    branches: [main]
+    paths: ['cervello/worker.js', '.github/workflows/cervello.yml']
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ACCOUNT: e472babdb02755efe426c5ae3fb0cfcb
+      SCRIPT: jarvis-cervello
+      GCAL_SA: ${{ secrets.GCAL_SA }}
+      GCAL_ID: ${{ secrets.GCAL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Controllo del codice
+        run: cp cervello/worker.js /tmp/w.mjs && node --check /tmp/w.mjs
+      - name: Pubblica su Cloudflare
+        run: |
+          test -n "$CF_TOKEN" || { echo "Manca il segreto CLOUDFLARE_API_TOKEN"; exit 1; }
+          echo '{"main_module":"worker.js","compatibility_date":"2026-10-01","keep_bindings":["secret_text","kv_namespace","plain_text"]}' > meta.json
+          curl -sS -f -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/$SCRIPT" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -F "metadata=@meta.json;type=application/json" \
+            -F "worker.js=@cervello/worker.js;type=application/javascript+module" | jq '{success, errors}'
+      - name: Segreti del calendario
+        if: env.GCAL_SA != ''
+        run: |
+          for N in GCAL_SA GCAL_ID; do
+            V="${!N}"; [ -z "$V" ] && continue
+            jq -n --arg n "$N" --arg t "$V" '{name:$n,text:$t,type:"secret_text"}' | \
+            curl -sS -f -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/$SCRIPT/secrets" \
+              -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" --data @- | jq '{success, errors}'
+          done

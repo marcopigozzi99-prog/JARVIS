@@ -230,6 +230,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
 
   <section class="pane" id="p-oggi">
     <div class="block">
+      <h2>Agenda di oggi <span class="when">Google Calendar</span></h2>
+      <ul class="notes" id="agendaList"><li class="empty">Caricamento…</li></ul>
+    </div>
+    <div class="block">
       <h2>Richieste a Claude <span class="when">controllo ogni ora, 7-23</span></h2>
       <ul class="notes" id="claudeList"><li class="empty">Nessuna richiesta.</li></ul>
     </div>
@@ -348,6 +352,11 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       </form>
       <div class="linkrow" id="fzRow" hidden><span class="note-small ok">Formichina collegata</span><button class="btn small" type="button" id="fzOff">Scollega</button></div>
     </div>
+    <details class="block" id="calHelp">
+      <summary><b>Collegare il calendario</b></summary>
+      <p class="note-small">Jarvis usa Google Calendar. La configurazione la fa Claude con te, una volta sola. Poi puoi dire: "cosa ho domani", "quando sono libero questa settimana", "metti dentista giovedì alle 18:30", "trova un'ora e mezza per scrivere il capitolo 2", "togli la palestra di venerdì". Prima di aggiungere o togliere qualcosa Jarvis chiede sempre conferma.</p>
+      <p class="note-small">Spazi liberi usati da Jarvis: dal lunedì al venerdì dalle 18:30 alle 22:30, sabato e domenica dalle 9 alle 20.</p>
+    </details>
     <details class="block" id="micHelp">
       <summary><b>Jarvis non sente la voce?</b></summary>
       <ol class="note-small" style="padding-left:18px;line-height:1.6">
@@ -614,6 +623,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       lastPlanText ? 'Piano pasti di oggi: ' + lastPlanText : '',
       st.prio.filter((p) => !p.done).length ? 'Priorità aperte: ' + st.prio.filter((p) => !p.done).map((p) => p.text).join('; ') + '.' : '',
       st.step ? 'Passo di stasera per l\'entrata secondaria: ' + st.step : '',
+      calToday ? 'Calendario di oggi: ' + ((calToday.events || []).map((e) => (e.allDay ? '' : e.start + ' ') + e.title).join('; ') || 'nessun impegno') + '. Spazi liberi: ' + ((calToday.free || []).join(', ') || 'nessuno') + '.' : '',
     ].filter(Boolean).join('\n');
     $('status').textContent = 'Ci penso…';
     try {
@@ -642,6 +652,50 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       return reply(q, 'Non riesco a raggiungere il cervello: controlla la connessione.', [{ label: 'Chiedi a Claude', href: 'https://claude.ai/new?q=' + encodeURIComponent(q) }]);
     }
   }
+
+  // ---------- Calendario (Google Calendar tramite il cervello) ----------
+  // Leggere è immediato; aggiungere o togliere un impegno chiede sempre conferma ("sì" / "no").
+  const CAL_RE = /\b(calendari|agenda|appuntament|impegn|sono liber|spazi[oi]? liber|un buco|cosa (ho|c'è|c'e) (oggi|domani|stasera|dopodomani|luned|marted|mercoled|gioved|venerd|sabato|domenica|questa settimana|la prossima settimana|in programma)|fissa(mi)? |mett[ia]mi |in calendario|in agenda|ricordami di|devo (fare|andare|chiamare|portare|passare)|cancella .*(appuntament|impegn)|togli .*(appuntament|impegn|dal calendario))/;
+  const CAL_RE2 = /\b(metti|aggiungi|segna|fissa|programma|organizza|trova)\b.*\b(oggi|domani|dopodomani|luned|marted|mercoled|gioved|venerd|sabato|domenica|stasera|alle \d|settimana|un'ora|mezz'ora|ore per|tempo per)/;
+  let calPending = null, calToday = null;
+  async function calPost(path, body) {
+    const r = await fetch(brainBase() + '/cal/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return r.json();
+  }
+  async function handleCalendar(q) {
+    work('agenda'); $('status').textContent = 'Guardo il calendario…';
+    let j; try { j = await calPost('ask', { text: q }); } catch { done('agenda'); return reply(q, 'Non riesco a raggiungere il calendario adesso. Riprova tra poco.'); }
+    done('agenda');
+    if (j.action === 'none') return st.brain ? askBrain(q) : reply(q, 'Non ho capito cosa fare con il calendario.');
+    if (j.error === 'nocal') return reply(q, 'Il calendario non è ancora collegato. Te lo spiego nelle impostazioni.', [{ label: 'Come collegarlo', href: '#', onclick: () => { openDrawer('comandi'); const d = $('calHelp'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } } }]);
+    if (j.confirm && j.proposal) { calPending = { kind: j.action, p: j.proposal, at: Date.now() }; convo = true; return reply(q, j.say, [{ label: 'Sì, conferma', href: '#', amber: true, onclick: () => handle('sì') }, { label: 'No', href: '#', onclick: () => handle('no') }]); }
+    return reply(q, j.say || 'Fatto.');
+  }
+  async function confirmCalendar(q, yes) {
+    const c = calPending; calPending = null;
+    if (!yes) return reply(q, 'Va bene, non cambio niente.');
+    work('agenda');
+    try {
+      const j = c.kind === 'delete' ? await calPost('remove', { id: c.p.id }) : await calPost('create', c.p);
+      done('agenda'); loadAgenda();
+      return reply(q, j.say || (j.ok ? 'Fatto.' : 'Non sono riuscito a salvarlo.'));
+    } catch { done('agenda'); return reply(q, 'Non riesco a raggiungere il calendario adesso. Riprova tra poco.'); }
+  }
+  async function loadAgenda() {
+    if (!st.brain) return;
+    try {
+      const r = await fetch(brainBase() + '/cal/today', { cache: 'no-store' }); const j = await r.json();
+      const ul = $('agendaList'); if (!ul) return;
+      if (j.error === 'nocal') { calToday = null; ul.innerHTML = '<li class="empty">Calendario non collegato: guarda in Impostazioni.</li>'; return; }
+      if (j.error) { ul.innerHTML = ''; const li = document.createElement('li'); li.className = 'empty'; li.textContent = j.say || 'Calendario non disponibile.'; ul.appendChild(li); return; }
+      calToday = j; ul.innerHTML = '';
+      (j.events || []).forEach((e) => { const li = document.createElement('li'); const d = document.createElement('div');
+        const w = document.createElement('span'); w.className = 'tag'; w.textContent = e.allDay ? 'giorno' : e.start; const tx = document.createElement('span'); tx.textContent = e.title;
+        d.append(w, tx); li.appendChild(d); ul.appendChild(li); });
+      const li = document.createElement('li'); li.className = 'empty'; li.textContent = j.free && j.free.length ? 'Libero: ' + j.free.join(', ') : 'Nessuno spazio libero nei tuoi orari.'; ul.appendChild(li);
+    } catch {}
+  }
+  setTimeout(loadAgenda, 1800); setInterval(loadAgenda, 15 * 60 * 1000);
 
   // ---------- Memoria di Jarvis (progetti, note, creazioni) ----------
   let MEM = { projects: [], notes: [], works: [] };
@@ -1052,6 +1106,13 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     const t = q.toLowerCase();
     let m;
 
+    // Conferma di un impegno proposto (entro 3 minuti)
+    if (calPending) {
+      if (Date.now() - calPending.at < 180000 && /^(s[iì]|ok|okay|va bene|confermo|conferma|perfetto|metti(lo)?|d'accordo|certo|vai)(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, true);
+      if (Date.now() - calPending.at < 180000 && /^(no|annulla|lascia (stare|perdere)|niente)(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, false);
+      calPending = null;
+    }
+
     // Agenti specializzati, chiamati per nome
     if ((m = q.match(/^\s*(?:agente\s+)?(vendite|scrittura|bambini|pianificazione|piano|marketing|grafica)\s*[,:]\s*(.{3,})$/i)) || (m = q.match(/^\s*agente\s+(vendite|scrittura|bambini|pianificazione|piano|marketing|grafica)\s+(.{3,})$/i))) {
       const id = m[1].toLowerCase() === 'piano' ? 'pianificazione' : m[1].toLowerCase();
@@ -1127,6 +1188,9 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     }
     if (/^(aiuto|cosa sai fare|comandi)/.test(t)) { show('comandi'); return reply(q, 'Ecco cosa so fare. Per tutto il resto chiedo a Claude.'); }
     if (/^(ciao|buongiorno|buonasera|ehi)/.test(t)) return reply(q, greet() + ', Marco. Dimmi pure.');
+
+    // Calendario: impegni, spazi liberi, appuntamenti
+    if (st.brain && (CAL_RE.test(t) || CAL_RE2.test(t))) return handleCalendar(q);
 
     // Tutto il resto: il cervello IA, se collegato; altrimenti Claude
     if (/^(nuova conversazione|ricominciamo|ricomincia|cambiamo argomento)\b/.test(t)) { hist = []; return reply(q, 'D\'accordo, ricominciamo. Dimmi pure.'); }
@@ -1494,6 +1558,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     formichina: '<circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.7 0-2.5 1-2.5 2s1 1.6 2.5 2 2.5 1 2.5 2-.8 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5v1.5M12 16v1.5"/>',
     meteo: '<circle cx="9" cy="9" r="3"/><path d="M9 2v1.5M2 9h1.5M4 4l1 1M14 4l-1 1M8 20h9a3.5 3.5 0 1 0-1-6.9A5 5 0 0 0 8 15a2.5 2.5 0 0 0 0 5z"/>',
     memoria: '<path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/>',
+    agenda: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M9 3h6"/>',
     grafica: '<circle cx="12" cy="12" r="8.5"/><circle cx="8.5" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="15.5" cy="10" r="1.2"/><path d="M12 20.5c-1.5 0-2-1-1.5-2.2.6-1.3 2.2-1.3 3-2.3"/>',
     vendite: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
     scrittura: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
@@ -1516,6 +1581,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     { id: 'vendite', label: 'Vendite', on: () => !!st.brain, tap: callAgent('vendite', 'Agente vendite: dimmi pure.') },
     { id: 'marketing', label: 'Marketing', on: () => !!st.brain, tap: callAgent('marketing', 'Agente marketing: cosa promuoviamo?') },
     { id: 'pianificazione', label: 'Piano', on: () => !!st.brain, tap: callAgent('pianificazione', 'Agente pianificazione: cosa organizziamo?') },
+    { id: 'agenda', label: 'Agenda', on: () => !!(st.brain && calToday), tap: () => { unlockSpeech(); handle('cosa ho in agenda oggi'); } },
     { id: 'ricettario', label: 'Cucina', on: () => !!(st.fb && st.fb.refresh), tap: () => { unlockSpeech(); handle('cosa mangiamo stasera'); } },
     { id: 'formichina', label: 'Soldi', on: () => !!st.fz, tap: () => { unlockSpeech(); st.fz ? handle('quanto posso spendere oggi') : openDrawer('comandi'); } },
     { id: 'memoria', label: 'Memoria', on: () => true, tap: () => { openDrawer('idee'); loadMemory(); } },

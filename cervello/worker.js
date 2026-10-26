@@ -253,6 +253,182 @@ async function inboxRoute(request, env, url, sub, origin) {
 }
 
 // Dal Comando Rapido di iPhone: { q: "domanda", history: "Marco: …\nJarvis: …" }
+// ---------- Calendario (Google Calendar, con un account di servizio) ----------
+// Segreti: GCAL_SA = il file JSON della chiave dell'account di servizio; GCAL_ID = l'indirizzo del calendario
+// (di solito la propria email Gmail), condiviso con l'account di servizio con "Apportare modifiche agli eventi".
+const TZ = 'Europe/Rome';
+const CAL_WINDOWS = { weekday: [[18 * 60 + 30, 22 * 60 + 30]], weekend: [[9 * 60, 20 * 60]] };   // spazi per gli impegni
+const romeOffset = (d) => {   // ore di differenza da UTC (ora legale: ultima domenica di marzo -> ultima di ottobre, alle 01:00 UTC)
+  const y = d.getUTCFullYear();
+  const lastSun = (m) => { const t = new Date(Date.UTC(y, m + 1, 0, 1)); t.setUTCDate(t.getUTCDate() - t.getUTCDay()); return t; };
+  return d >= lastSun(2) && d < lastSun(9) ? 2 : 1;
+};
+const pad = (n) => String(n).padStart(2, '0');
+const romeNow = () => { const d = new Date(); return new Date(d.getTime() + romeOffset(d) * 3600e3); };   // "orologio di Roma" letto in UTC
+const ymd = (r) => `${r.getUTCFullYear()}-${pad(r.getUTCMonth() + 1)}-${pad(r.getUTCDate())}`;
+function romeToUtc(dateStr, minutes) {   // "2026-10-27", 1110 -> Date UTC reale
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const guess = new Date(Date.UTC(y, m - 1, d, 0, minutes));
+  return new Date(guess.getTime() - romeOffset(new Date(guess.getTime() - 3600e3)) * 3600e3);
+}
+const rfc = (utc) => { const off = romeOffset(utc); const r = new Date(utc.getTime() + off * 3600e3); return `${ymd(r)}T${pad(r.getUTCHours())}:${pad(r.getUTCMinutes())}:00+0${off}:00`; };
+const hhmm = (utc) => { const r = new Date(utc.getTime() + romeOffset(utc) * 3600e3); return `${r.getUTCHours()}:${pad(r.getUTCMinutes())}`; };
+const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+const dayName = (dateStr) => { const [y, m, d] = dateStr.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d)); return `${GIORNI[t.getUTCDay()]} ${d} ${MESI[m - 1]}`; };
+const addDays = (dateStr, n) => { const [y, m, d] = dateStr.split('-').map(Number); return ymd(new Date(Date.UTC(y, m - 1, d + n))); };
+
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlStr = (s) => b64url(new TextEncoder().encode(s));
+let gTok = null;
+async function googleToken(env) {
+  if (gTok && gTok.exp > Date.now() + 60e3) return gTok.token;
+  let sa; try { sa = JSON.parse(env.GCAL_SA); } catch { throw Object.assign(new Error('Il calendario non è ancora collegato'), { code: 'nocal' }); }
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64urlStr(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = b64urlStr(JSON.stringify({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/calendar', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const pem = sa.private_key.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  const key = await crypto.subtle.importKey('pkcs8', Uint8Array.from(atob(pem), (c) => c.charCodeAt(0)), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(head + '.' + claim)));
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + head + '.' + claim + '.' + b64url(sig) });
+  const j = await r.json();
+  if (!r.ok) throw new Error('Google non accetta la chiave del calendario: ' + (j.error_description || j.error || r.status));
+  gTok = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  return gTok.token;
+}
+async function gcal(env, path, opts = {}) {
+  const t = await googleToken(env);
+  const r = await fetch('https://www.googleapis.com/calendar/v3' + path, { ...opts, headers: { authorization: 'Bearer ' + t, 'content-type': 'application/json', ...(opts.headers || {}) } });
+  const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = (j.error && j.error.message) || 'Calendario ' + r.status;
+    throw Object.assign(new Error(r.status === 404 || r.status === 403 ? 'Non vedo il calendario: va condiviso con l\'account di Jarvis con il permesso di modificare gli eventi' : msg), { code: r.status === 404 || r.status === 403 ? 'share' : 'gcal' });
+  }
+  return j;
+}
+const calId = (env) => encodeURIComponent(env.GCAL_ID || 'primary');
+async function eventsOn(env, from, days = 1) {
+  const q = new URLSearchParams({ timeMin: rfc(romeToUtc(from, 0)), timeMax: rfc(romeToUtc(addDays(from, days), 0)), singleEvents: 'true', orderBy: 'startTime', maxResults: '100', timeZone: TZ });
+  const j = await gcal(env, `/calendars/${calId(env)}/events?` + q);
+  return (j.items || []).filter((e) => e.status !== 'cancelled').map((e) => ({
+    id: e.id, title: e.summary || '(senza titolo)', allDay: !!(e.start && e.start.date),
+    start: e.start.dateTime ? new Date(e.start.dateTime) : null, end: e.end && e.end.dateTime ? new Date(e.end.dateTime) : null,
+    date: e.start.date || (e.start.dateTime ? ymd(new Date(new Date(e.start.dateTime).getTime() + romeOffset(new Date(e.start.dateTime)) * 3600e3)) : ''),
+  }));
+}
+function freeSlots(dateStr, events, minMin = 15) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const wins = dow === 0 || dow === 6 ? CAL_WINDOWS.weekend : CAL_WINDOWS.weekday;
+  const nowUtc = new Date();
+  const busy = events.filter((e) => !e.allDay && e.start && e.date === dateStr).map((e) => [e.start.getTime(), e.end.getTime()]).sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [a, b] of wins) {
+    let s = Math.max(romeToUtc(dateStr, a).getTime(), nowUtc.getTime() + 10 * 60e3);
+    s = Math.ceil(s / (15 * 60e3)) * 15 * 60e3;     // a quarti d'ora
+    const e = romeToUtc(dateStr, b).getTime();
+    for (const [bs, be] of busy) {
+      if (be <= s || bs >= e) continue;
+      if (bs - s >= minMin * 60e3) out.push([s, bs]);
+      s = Math.max(s, be);
+    }
+    if (e - s >= minMin * 60e3) out.push([s, e]);
+  }
+  return out.map(([a, b]) => ({ start: new Date(a), end: new Date(b) }));
+}
+const describe = (ev) => ev.allDay ? `${ev.title} (tutto il giorno)` : `alle ${hhmm(ev.start)} ${ev.title}`;
+
+const CAL_PARSER = `Trasformi una frase di Marco sul suo calendario in JSON. Rispondi SOLO con un oggetto JSON, senza testo intorno.
+Campi:
+- "action": "list" (cosa ho / impegni / agenda), "free" (quando sono libero / spazi liberi), "add" (aggiungi, metti, fissa, programma, ricordami di fare, devo fare), "delete" (cancella, togli un impegno), "none" (non riguarda il calendario).
+- "date": giorno di riferimento "AAAA-MM-GG" (oggi se non detto; "domani", "giovedì", "il 3" vanno calcolati dalla data di oggi). Per "questa settimana" usa oggi e "days": 7.
+- "days": numero di giorni da guardare (1 se non detto).
+- "title": per add/delete, il titolo breve dell'impegno, con iniziale maiuscola.
+- "time": per add, l'ora "HH:MM" se Marco la dice, altrimenti null (allora cerco io uno spazio libero).
+- "duration": per add, minuti (se non detto: 60; "mezz'ora" = 30; "un'ora e mezza" = 90).
+- "flexible": true se Marco chiede di trovare tu lo spazio ("quando ho tempo", "trova un buco", "piazzalo") oppure non dice l'ora.
+- "within": per add flessibile, giorni entro cui cercare (se non detto: 7).`;
+async function calParse(env, text) {
+  const r = romeNow();
+  const today = ymd(r);
+  const sys = CAL_PARSER + `\nOggi è ${dayName(today)} ${r.getUTCFullYear()} (${today}), ore ${r.getUTCHours()}:${pad(r.getUTCMinutes())}.`;
+  const raw = await askGemini(env, sys, [{ role: 'user', content: String(text).slice(0, 500) }], { maxTokens: 300 });
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('Non ho capito la richiesta per il calendario');
+  const j = JSON.parse(m[0]);
+  j.date = /^\d{4}-\d\d-\d\d$/.test(j.date || '') ? j.date : today;
+  j.days = Math.min(Math.max(Number(j.days) || 1, 1), 14);
+  j.duration = Math.min(Math.max(Number(j.duration) || 60, 10), 600);
+  j.within = Math.min(Math.max(Number(j.within) || 7, 1), 21);
+  return j;
+}
+async function calendarRoute(request, env, url, sub, origin) {
+  if (!env.GCAL_SA) return json({ error: 'nocal', say: 'Il calendario non è ancora collegato. Segui i passi nella guida di Jarvis.' }, 200, origin);
+  let b = {}; if (request.method === 'POST') { try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); } }
+  try {
+    if (sub === 'today') {   // per il pannello Oggi e il contesto del cervello
+      const date = url.searchParams.get('date') || ymd(romeNow());
+      const ev = await eventsOn(env, date, 1);
+      return json({ date, events: ev.map((e) => ({ title: e.title, allDay: e.allDay, start: e.start && hhmm(e.start), end: e.end && hhmm(e.end) })), free: freeSlots(date, ev).map((f) => `${hhmm(f.start)}-${hhmm(f.end)}`) }, 200, origin);
+    }
+    if (sub === 'create') {  // conferma di una proposta: { title, start, end } (ISO)
+      const title = String(b.title || '').slice(0, 200).trim(); const st = new Date(b.start), en = new Date(b.end);
+      if (!title || isNaN(st) || isNaN(en) || en <= st) return json({ error: 'Dati dell\'impegno non validi' }, 400, origin);
+      const ev = await gcal(env, `/calendars/${calId(env)}/events`, { method: 'POST', body: JSON.stringify({ summary: title, start: { dateTime: rfc(st), timeZone: TZ }, end: { dateTime: rfc(en), timeZone: TZ }, description: 'Aggiunto da Jarvis', reminders: { useDefault: true } }) });
+      return json({ ok: true, id: ev.id, say: `Fatto: ${title}, ${dayName(ymd(new Date(st.getTime() + romeOffset(st) * 3600e3)))} alle ${hhmm(st)}.` }, 200, origin);
+    }
+    if (sub === 'remove') {
+      await gcal(env, `/calendars/${calId(env)}/events/${encodeURIComponent(String(b.id || ''))}`, { method: 'DELETE' });
+      return json({ ok: true, say: 'Tolto dal calendario.' }, 200, origin);
+    }
+    // sub === 'ask': frase libera
+    const p = await calParse(env, b.text || '');
+    if (p.action === 'none') return json({ action: 'none' }, 200, origin);
+    if (p.action === 'list' || p.action === 'free') {
+      const ev = await eventsOn(env, p.date, p.days);
+      const parts = [];
+      for (let i = 0; i < p.days; i++) {
+        const d = addDays(p.date, i), mine = ev.filter((e) => e.date === d);
+        const free = freeSlots(d, ev);
+        const freeTxt = free.length ? 'libero ' + free.map((f) => `dalle ${hhmm(f.start)} alle ${hhmm(f.end)}`).join(' e ') : 'nessuno spazio libero nei tuoi orari';
+        if (p.action === 'list') parts.push(`${dayName(d)}: ${mine.length ? mine.map(describe).join(', ') : 'niente in calendario'}${p.days === 1 ? '; ' + freeTxt : ''}`);
+        else parts.push(`${dayName(d)}: ${freeTxt}`);
+      }
+      return json({ action: p.action, say: parts.join('. ') + '.' }, 200, origin);
+    }
+    if (p.action === 'delete') {
+      const ev = await eventsOn(env, p.date, Math.max(p.days, 7));
+      const t = String(p.title || '').toLowerCase();
+      const hit = ev.find((e) => t && e.title.toLowerCase().includes(t)) || ev.find((e) => t && t.split(/\s+/).some((w) => w.length > 3 && e.title.toLowerCase().includes(w)));
+      if (!hit) return json({ action: 'delete', say: `Non trovo "${p.title}" nel calendario dei prossimi giorni.` }, 200, origin);
+      return json({ action: 'delete', confirm: true, proposal: { id: hit.id, title: hit.title }, say: `Tolgo ${hit.title}, ${dayName(hit.date)}${hit.start ? ' alle ' + hhmm(hit.start) : ''}?` }, 200, origin);
+    }
+    // add
+    const title = String(p.title || 'Impegno').slice(0, 200);
+    let start = null;
+    if (p.time && /^\d{1,2}:\d\d$/.test(p.time) && !p.flexible) {
+      const [h, mi] = p.time.split(':').map(Number); start = romeToUtc(p.date, h * 60 + mi);
+      const ev = await eventsOn(env, p.date, 1); const end = new Date(start.getTime() + p.duration * 60e3);
+      const clash = ev.find((e) => !e.allDay && e.start < end && e.end > start);
+      return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
+        say: `Metto ${title} ${dayName(p.date)} alle ${hhmm(start)}, per ${p.duration} minuti${clash ? ', ma si sovrappone a ' + clash.title : ''}. Confermi?` }, 200, origin);
+    }
+    const ev = await eventsOn(env, p.date, p.within);
+    for (let i = 0; i < p.within && !start; i++) {
+      const d = addDays(p.date, i);
+      const slot = freeSlots(d, ev).find((f) => f.end - f.start >= p.duration * 60e3);
+      if (slot) start = slot.start;
+    }
+    if (!start) return json({ action: 'add', say: `Nei prossimi ${p.within} giorni non trovo uno spazio di ${p.duration} minuti nei tuoi orari liberi. Dimmi tu giorno e ora.` }, 200, origin);
+    const end = new Date(start.getTime() + p.duration * 60e3);
+    const d = ymd(new Date(start.getTime() + romeOffset(start) * 3600e3));
+    return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
+      say: `Il primo spazio libero è ${dayName(d)} dalle ${hhmm(start)} alle ${hhmm(end)}. Metto lì ${title}?` }, 200, origin);
+  } catch (e) {
+    return json({ error: e.code || 'cal', say: String(e.message).slice(0, 220) }, 200, origin);
+  }
+}
+
 function fromShortcut(body) {
   const msgs = [];
   String(body.history || '').split('\n').forEach((line) => {
@@ -291,6 +467,7 @@ export default {
     }
     if (action === 'claude') return inboxRoute(request, env, url, sub, origin);
     if (action === 'mem') return memoryRoute(request, env, url, sub, origin);
+    if (action === 'cal') return calendarRoute(request, env, url, sub, origin);
     if (action === 'speak' && request.method === 'POST') {
       if (!env.GEMINI_API_KEY) return json({ error: 'La voce richiede la chiave Gemini' }, 500, origin);
       let b; try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); }
