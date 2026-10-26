@@ -669,12 +669,23 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     if (j.action === 'none') return st.brain ? askBrain(q) : reply(q, 'Non ho capito cosa fare con il calendario.');
     if (j.error === 'nocal') return reply(q, 'Il calendario non è ancora collegato. Te lo spiego nelle impostazioni.', [{ label: 'Come collegarlo', href: '#', onclick: () => { openDrawer('comandi'); const d = $('calHelp'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } } }]);
     if (j.error && !j.confirm) return reply(q, j.say || 'Il calendario non è ancora pronto: manca un ultimo passaggio di configurazione.');
-    if (j.confirm && j.proposal) { calPending = { kind: j.action, p: j.proposal, at: Date.now() }; convo = true; return reply(q, j.say, [{ label: 'Sì, conferma', href: '#', amber: true, onclick: () => handle('sì') }, { label: 'No', href: '#', onclick: () => handle('no') }]); }
+    if (j.confirm && j.proposal) { calPending = { kind: j.action, p: j.proposal, parsed: j.parsed, tries: 0, at: Date.now() }; convo = true; return reply(q, j.say, [{ label: 'Sì, conferma', href: '#', amber: true, onclick: () => handle('sì') }, { label: 'No', href: '#', onclick: () => handle('no') }]); }
     return reply(q, j.say || 'Fatto.');
   }
-  async function confirmCalendar(q, yes) {
+  async function confirmCalendar(q, yes, stopAll) {
     const c = calPending; calPending = null;
-    if (!yes) return reply(q, 'Va bene, non cambio niente.');
+    if (!yes && (stopAll || !c.parsed || c.tries >= 4)) return reply(q, 'Va bene, non cambio niente.');
+    if (!yes) {   // no: propongo lo spazio libero successivo
+      work('agenda'); $('status').textContent = 'Cerco un altro spazio…';
+      try {
+        const nextDay = /domani|altro giorno|giorno dopo|un altro giorno|non oggi|non stasera/i.test(q);
+        const j = await calPost('next', { p: c.parsed, after: c.p.start, nextDay });
+        done('agenda');
+        if (j.confirm && j.proposal) { calPending = { kind: 'add', p: j.proposal, parsed: j.parsed, tries: c.tries + 1, at: Date.now() }; convo = true;
+          return reply(q, j.say, [{ label: 'Sì, conferma', href: '#', amber: true, onclick: () => handle('sì') }, { label: 'Un altro', href: '#', onclick: () => handle('no') }, { label: 'Lascia stare', href: '#', onclick: () => handle('lascia stare') }]); }
+        return reply(q, j.say || 'Non trovo altri spazi liberi.');
+      } catch { done('agenda'); return reply(q, 'Non riesco a raggiungere il calendario adesso. Riprova tra poco.'); }
+    }
     work('agenda');
     try {
       const j = c.kind === 'delete' ? await calPost('remove', { id: c.p.id }) : await calPost('create', c.p);
@@ -1110,7 +1121,8 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     // Conferma di un impegno proposto (entro 3 minuti)
     if (calPending) {
       if (Date.now() - calPending.at < 180000 && /^(s[iì]|ok|okay|va bene|confermo|conferma|perfetto|metti(lo)?|d'accordo|certo|vai)(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, true);
-      if (Date.now() - calPending.at < 180000 && /^(no|annulla|lascia (stare|perdere)|niente)(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, false);
+      if (Date.now() - calPending.at < 180000 && /^(annulla|lascia (stare|perdere)|niente|basta|non importa)(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, false, true);
+      if (Date.now() - calPending.at < 180000 && /^(no|un altro|un'altra|altro|dopo|più tardi|piu tardi|non (va|mi va|posso))(?=[\s,.!]|$)/i.test(t)) return confirmCalendar(q, false);
       calPending = null;
     }
 
@@ -1249,7 +1261,15 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       };
       rec.start();
       micUi(true); $('status').textContent = auto ? 'Ti ascolto… (di\' "basta" per chiudere)' : 'Ti ascolto…';
-      idleT = setTimeout(finish, auto ? 7000 : 9000);  // nessuna parola: chiudo
+      idleT = setTimeout(finish, auto ? 8000 : 9000);  // nessuna parola: chiudo
+      // iPhone: dopo che Jarvis ha parlato, a volte il microfono si apre "muto" (non arriva nemmeno l'inizio
+      // della voce). Se in 3 secondi non arriva alcun segnale, lo chiudo e lo riapro da capo (fino a 3 volte).
+      if (auto && tries < 3) {
+        let heardSomething = false;
+        rec.onaudiostart = () => {}; rec.onsoundstart = () => { heardSomething = true; }; rec.onspeechstart = () => { heardSomething = true; };
+        const me = rec;
+        setTimeout(() => { if (rec === me && !heardSomething && !txt) { me.onend = null; try { me.abort(); } catch {} rec = null; clearTimeout(idleT); setTimeout(() => listen(true, tries + 1), 400); } }, 3000);
+      }
     } catch {
       rec = null; convo = false; micUi(false);
       $('status').textContent = auto ? 'Tocca il cerchio per rispondere' : 'Microfono non disponibile qui: scrivi il comando';

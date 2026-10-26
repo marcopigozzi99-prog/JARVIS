@@ -365,6 +365,24 @@ async function calParse(env, text) {
   j.within = Math.min(Math.max(Number(j.within) || 7, 1), 21);
   return j;
 }
+async function findSlot(env, p, afterMs = 0) {
+  const ev = await eventsOn(env, p.date, p.within);
+  for (let i = 0; i < p.within; i++) {
+    const d = addDays(p.date, i);
+    for (const f of freeSlots(d, ev, 15, !!p.outside)) {
+      let s = Math.max(f.start.getTime(), afterMs);
+      s = Math.ceil(s / (15 * 60e3)) * 15 * 60e3;
+      if (f.end.getTime() - s >= p.duration * 60e3) return new Date(s);
+    }
+  }
+  return null;
+}
+const slotProposal = (p, start, intro) => {
+  const end = new Date(start.getTime() + p.duration * 60e3);
+  const d = ymd(new Date(start.getTime() + romeOffset(start) * 3600e3));
+  return { action: 'add', confirm: true, parsed: p, proposal: { title: String(p.title || 'Impegno').slice(0, 200), start: start.toISOString(), end: end.toISOString() },
+    say: `${intro} ${dayName(d)} dalle ${hhmm(start)} alle ${hhmm(end)}. Metto lì ${String(p.title || 'l\'impegno')}?` };
+};
 async function calendarRoute(request, env, url, sub, origin) {
   if (!env.GCAL_SA) return json({ error: 'nocal', say: 'Il calendario non è ancora collegato. Segui i passi nella guida di Jarvis.' }, 200, origin);
   let b = {}; if (request.method === 'POST') { try { b = await request.json(); } catch { return json({ error: 'Richiesta non valida' }, 400, origin); } }
@@ -383,6 +401,16 @@ async function calendarRoute(request, env, url, sub, origin) {
     if (sub === 'remove') {
       await gcal(env, `/calendars/${calId(env)}/events/${encodeURIComponent(String(b.id || ''))}`, { method: 'DELETE' });
       return json({ ok: true, say: 'Tolto dal calendario.' }, 200, origin);
+    }
+    if (sub === 'next') {   // Marco ha detto no: propongo lo spazio libero successivo
+      const p = b.p || {}; const after = new Date(b.after).getTime();
+      if (!p.date || isNaN(after)) return json({ error: 'Richiesta non valida' }, 400, origin);
+      p.within = Math.min(Math.max(Number(p.within) || 7, 1), 21); p.duration = Math.min(Math.max(Number(p.duration) || 60, 10), 600);
+      // il giorno dopo se Marco l'ha chiesto, altrimenti almeno un'ora più tardi
+      const from = b.nextDay ? romeToUtc(addDays(ymd(new Date(after + romeOffset(new Date(after)) * 3600e3)), 1), 0).getTime() : after + 60 * 60e3;
+      const start = await findSlot(env, p, from);
+      if (!start) return json({ action: 'add', say: `Non trovo altri spazi liberi di ${p.duration} minuti nei prossimi giorni. Dimmi tu giorno e ora.` }, 200, origin);
+      return json(slotProposal(p, start, 'Allora'), 200, origin);
     }
     // sub === 'ask': frase libera
     const p = await calParse(env, b.text || '');
@@ -416,17 +444,10 @@ async function calendarRoute(request, env, url, sub, origin) {
       return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
         say: `Metto ${title} ${dayName(p.date)} alle ${hhmm(start)}, per ${p.duration} minuti${clash ? ', ma si sovrappone a ' + clash.title : ''}. Confermi?` }, 200, origin);
     }
-    const ev = await eventsOn(env, p.date, p.within);
-    for (let i = 0; i < p.within && !start; i++) {
-      const d = addDays(p.date, i);
-      const slot = freeSlots(d, ev, 15, !!p.outside).find((f) => f.end - f.start >= p.duration * 60e3);
-      if (slot) start = slot.start;
-    }
+    start = await findSlot(env, p, 0);
     if (!start) return json({ action: 'add', say: `Nei prossimi ${p.within} giorni non trovo uno spazio di ${p.duration} minuti nei tuoi orari liberi${p.outside ? ' per uscire, tra le 8 e le 20' : ''}. Dimmi tu giorno e ora.` }, 200, origin);
-    const end = new Date(start.getTime() + p.duration * 60e3);
-    const d = ymd(new Date(start.getTime() + romeOffset(start) * 3600e3));
-    return json({ action: 'add', confirm: true, proposal: { title, start: start.toISOString(), end: end.toISOString() },
-      say: `Il primo spazio libero è ${dayName(d)} dalle ${hhmm(start)} alle ${hhmm(end)}. Metto lì ${title}?` }, 200, origin);
+    p.title = title;
+    return json(slotProposal(p, start, 'Il primo spazio libero è'), 200, origin);
   } catch (e) {
     return json({ error: e.code || 'cal', say: String(e.message).slice(0, 220) }, 200, origin);
   }
