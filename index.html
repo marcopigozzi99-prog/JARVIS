@@ -668,6 +668,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     done('agenda');
     if (j.action === 'none') return st.brain ? askBrain(q) : reply(q, 'Non ho capito cosa fare con il calendario.');
     if (j.error === 'nocal') return reply(q, 'Il calendario non è ancora collegato. Te lo spiego nelle impostazioni.', [{ label: 'Come collegarlo', href: '#', onclick: () => { openDrawer('comandi'); const d = $('calHelp'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } } }]);
+    if (j.error && !j.confirm) return reply(q, j.say || 'Il calendario non è ancora pronto: manca un ultimo passaggio di configurazione.');
     if (j.confirm && j.proposal) { calPending = { kind: j.action, p: j.proposal, at: Date.now() }; convo = true; return reply(q, j.say, [{ label: 'Sì, conferma', href: '#', amber: true, onclick: () => handle('sì') }, { label: 'No', href: '#', onclick: () => handle('no') }]); }
     return reply(q, j.say || 'Fatto.');
   }
@@ -687,7 +688,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       const r = await fetch(brainBase() + '/cal/today', { cache: 'no-store' }); const j = await r.json();
       const ul = $('agendaList'); if (!ul) return;
       if (j.error === 'nocal') { calToday = null; ul.innerHTML = '<li class="empty">Calendario non collegato: guarda in Impostazioni.</li>'; return; }
-      if (j.error) { ul.innerHTML = ''; const li = document.createElement('li'); li.className = 'empty'; li.textContent = j.say || 'Calendario non disponibile.'; ul.appendChild(li); return; }
+      if (j.error) { calToday = null; ul.innerHTML = ''; const li = document.createElement('li'); li.className = 'empty'; li.textContent = j.say || 'Calendario non disponibile.'; ul.appendChild(li); return; }
       calToday = j; ul.innerHTML = '';
       (j.events || []).forEach((e) => { const li = document.createElement('li'); const d = document.createElement('div');
         const w = document.createElement('span'); w.className = 'tag'; w.textContent = e.allDay ? 'giorno' : e.start; const tx = document.createElement('span'); tx.textContent = e.title;
