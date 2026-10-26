@@ -450,7 +450,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const runAfterSpeak = () => {
     document.body.classList.remove('speaking');
     if (typeof done === 'function') done('voce');
-    if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 250); }
+    if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 600); }
     else if (typeof resumeWake === 'function') setTimeout(resumeWake, 400);   // fine risposta: torno ad aspettare "Jarvis"
   };
   // Voce neurale di Gemini (se attiva e il cervello è collegato); in caso di problemi, voce dell'iPhone.
@@ -1149,11 +1149,11 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     'language-not-supported': 'La lingua della Dettatura non è l\'italiano',
   };
   const micUi = (on) => { document.body.classList.toggle('listening', on); $('micLbl').textContent = on ? 'Ascolto' : (convo ? 'Dialogo' : 'Parla'); };
-  function listen(auto = false) {
+  function listen(auto = false, tries = 0) {
     if (!SR) { convo = false; $('status').textContent = 'Microfono non disponibile qui: scrivi il comando'; $('cmd').focus(); return; }
     if (rec) return;
     stopWake(true);
-    let txt = '', errCode = '', silenceT = null, idleT = null;
+    let txt = '', errCode = '', silenceT = null, idleT = null; const startedAt = Date.now();
     const finish = () => { try { rec && rec.stop(); } catch {} };
     try {
       rec = new SR(); rec.lang = 'it-IT'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
@@ -1167,6 +1167,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       rec.onend = () => {
         clearTimeout(idleT); clearTimeout(silenceT); rec = null;
         const said = txt.trim(); $('cmd').value = '';
+        // iPhone: subito dopo che Jarvis ha parlato il microfono a volte si chiude da solo in un attimo. Riprovo.
+        if (!said && tries < 2 && Date.now() - startedAt < 1500 && errCode !== 'not-allowed' && errCode !== 'service-not-allowed') {
+          setTimeout(() => listen(auto, tries + 1), 500); return;
+        }
         if (!said) {
           convo = false; micUi(false); setTimeout(resumeWake, 300);
           $('status').textContent = MIC_ERR[errCode] || (auto ? 'Dialogo chiuso. Tocca il cerchio per riprendere'
@@ -1237,28 +1241,45 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     let errCode = '';
     try {
       const r = new SR(); r.lang = 'it-IT'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+      // Sentito "Jarvis": NON spengo il microfono per riaccenderne un altro (su iPhone spesso il secondo
+      // resta muto). Continuo con lo stesso ascolto e prendo la domanda che segue.
+      let cap = null, capSil = null, capIdle = null;
+      const endCapture = () => { clearTimeout(capSil); clearTimeout(capIdle); cap = null; document.body.classList.remove('listening'); wakeUi(); };
+      const fire = (text) => {
+        clearTimeout(capSil); clearTimeout(capIdle);
+        wakeHandled = true; wakeFails = 0; cap = null;
+        stopWake(true); unlockSpeech(); convo = true;
+        $('you').textContent = '› ' + text; $('status').textContent = 'Ci penso…';
+        handle(text);
+      };
       r.onresult = (e) => {
         if (wakeHandled) return;
-        const heard = Array.from(e.results).slice(-1)[0][0].transcript.trim();
-        if (heard && !rec) $('status').textContent = 'Sento: ' + heard.slice(-40);
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const t = e.results[i][0].transcript.trim();
-          const m = t.match(WAKE);
-          if (!m) continue;
-          const after = t.slice(m.index + m[0].length).trim();
-          if (!e.results[i].isFinal && after.length < 3) continue;   // aspetto di capire se segue una domanda
-          wakeHandled = true; wakeFails = 0;
-          stopWake(true);
-          unlockSpeech();
-          convo = true;
-          if (after.length > 2) { $('status').textContent = 'Ci penso…'; handle(after); }
-          else { reply('Jarvis', 'Dimmi.'); }
-          return;
+        const res = Array.from(e.results);
+        if (!cap) {
+          const heard = res.slice(-1)[0][0].transcript.trim();
+          if (heard && !rec) $('status').textContent = 'Sento: ' + heard.slice(-40);
+          for (let i = e.resultIndex; i < res.length; i++) {
+            const t = res[i][0].transcript, m = t.match(WAKE);
+            if (!m) continue;
+            cap = { i, cut: m.index + m[0].length };
+            wakeFails = 0;
+            document.body.classList.add('listening'); $('micLbl').textContent = 'Ascolto'; $('status').textContent = 'Ti ascolto…';
+            capIdle = setTimeout(() => { endCapture(); $('status').textContent = 'Non ho sentito la domanda. Di\' "Jarvis" e riprova'; }, 7000);
+            break;
+          }
+          if (!cap) return;
         }
+        // testo dopo "Jarvis" (stesso risultato e successivi)
+        const tail = res.slice(cap.i).map((x, k) => (k === 0 ? x[0].transcript.slice(cap.cut) : x[0].transcript)).join(' ').replace(/\s+/g, ' ').trim();
+        if (tail.length < 3) return;
+        $('you').textContent = '› ' + tail;
+        clearTimeout(capIdle); clearTimeout(capSil);
+        capSil = setTimeout(() => fire(tail), 1300);     // 1,3 secondi di silenzio: hai finito
       };
       r.onerror = (e) => { errCode = e.error || ''; };
       r.onend = () => {
         if (wakeRec !== r) return;
+        if (cap && !wakeHandled) { const t = $('you').textContent.replace(/^› /, '').trim(); if (t.length > 2) { wakeRec = null; document.body.classList.remove('waking'); fire(t); return; } endCapture(); }
         wakeRec = null; document.body.classList.remove('waking');
         if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
           wakeFails++;
