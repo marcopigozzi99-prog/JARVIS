@@ -10,7 +10,9 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png" type="image/png">
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}</style>
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}@keyframes tapme{0%,100%{box-shadow:0 0 0 0 rgba(127,220,164,.55)}50%{box-shadow:0 0 0 18px rgba(127,220,164,0)}}
+body.await-tap #mic{animation:tapme 1.6s ease-in-out infinite}
+</style>
 <title>Jarvis</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -410,7 +412,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const clean=(u)=>String(u).replace(/\/[A-Za-z0-9_-]{20,}(?=\/|$)/g,'/[token]').replace(/([?&](key|token)=)[^&]+/gi,'$1[x]');
   function d(ev,info){ try{ log.push([new Date().toISOString().slice(11,23),ev,info===undefined?'':String(info).slice(0,160)]); if(log.length>MAX) log=log.slice(-MAX); localStorage.setItem(KEY,JSON.stringify(log)); }catch(e){} }
   window.jdiag=d;
-  d('avvio', 'standalone='+(navigator.standalone||matchMedia('(display-mode: standalone)').matches)+' versione=voce-3');
+  d('avvio', 'standalone='+(navigator.standalone||matchMedia('(display-mode: standalone)').matches)+' versione=voce-4');
   addEventListener('error',e=>d('errore-js',(e.message||'')+' @'+(e.lineno||'')));
   addEventListener('unhandledrejection',e=>d('promise-rifiutata',e.reason&&(e.reason.message||e.reason)));
   document.addEventListener('visibilitychange',()=>d('visibilita',document.visibilityState));
@@ -488,7 +490,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   let voiceReady = false;
   // Lettore unico per la voce neurale: su iPhone va "sbloccato" con un tocco, poi può parlare da solo.
   const player = new Audio(); player.preload = 'auto'; player.setAttribute('playsinline', '');
-  const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+  const SILENT = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';  // 0,1 s di silenzio vero: sblocca l'audio al primo tocco
   const unlockSpeech = () => {
     if (voiceReady) return;
     voiceReady = true;
@@ -521,6 +523,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     for (const p of parts) { if (out && (out + p).length > 220) break; out += p; }
     return (out || String(t)).slice(0, 300).trim();
   };
+  // Su iPhone l'audio parte solo dopo un tocco. Se manca, tengo la risposta in sospeso e chiedo un tocco.
+  let pendingSay = null, tapped = false;   // tapped: c'è stato almeno un tocco vero da quando l'app è aperta
+  ['touchend', 'click', 'keydown'].forEach((ev) => addEventListener(ev, () => { tapped = true; }, { capture: true }));
+  const askTap = (msg) => { document.body.classList.add('await-tap'); document.body.classList.remove('speaking'); $('status').textContent = msg; try { window.jdiag && jdiag('chiedo un tocco', msg); } catch {} };
   async function speakNeural(text, onFail) {
     try {
       if (typeof work === 'function') work('voce');
@@ -539,7 +545,10 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
       player.src = lastUrl;
       await player.play();
-    } catch (e) { onFail(e.message || 'errore'); }
+    } catch (e) {
+      if (e && e.name === 'NotAllowedError') { pendingSay = { kind: 'player' }; askTap('Tocca il cerchio per ascoltare la risposta'); return; }
+      onFail(e.message || 'errore');
+    }
   }
   const speakDevice = (text) => {
     try {
@@ -554,6 +563,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     } catch { runAfterSpeak(); }
   };
   const speak = (text) => {
+    if (!tapped) { pendingSay = { kind: 'text', text }; askTap('Tocca il cerchio per ascoltare la risposta'); return; }
     try { player.pause(); } catch {}
     try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch {}
     if (neuralOn()) speakNeural(text, (why) => { lastVoiceErr = why; speakDevice(text); });
@@ -580,7 +590,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       if (a.onclick) { el.addEventListener('click', (ev) => { ev.preventDefault(); a.onclick(); }); } else { el.target = '_blank'; el.rel = 'noopener'; }
       box.appendChild(el);
     });
-    afterSpeak = convo ? () => listen(true) : null;
+    afterSpeak = convo ? () => askTap('Tocca il cerchio per rispondere') : null;   // iPhone: dopo la voce il microfono riparte solo con un tocco
     speak(text);
   };
 
@@ -1448,6 +1458,12 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   });
 
   $('mic').addEventListener('click', () => {
+    document.body.classList.remove('await-tap');
+    if (pendingSay) {   // risposta in sospeso: il tocco la fa partire
+      const p = pendingSay; pendingSay = null; unlockSpeech();
+      if (p.kind === 'player') { document.body.classList.add('speaking'); player.play().catch(() => runAfterSpeak()); } else speak(p.text);
+      return;
+    }
     unlockSpeech();
     wakeBlocked = false; wakeFails = 0;      // il tocco riattiva anche l'ascolto continuo, che ripartirà dopo il comando
     if (rec) { convo = false; afterSpeak = null; try { rec.stop(); } catch {} return; }   // secondo tocco: smetto di ascoltare
