@@ -497,10 +497,18 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   };
   // Dialogo: dopo che Jarvis ha parlato, se la conversazione è aperta torna ad ascoltare da solo.
   let convo = false, afterSpeak = null;
+  // iPhone: finché l'elemento audio resta "occupato", il microfono si apre muto (diagnosi del 30/10).
+  // Dopo ogni risposta rilascio l'audio e rimetto la sessione audio in automatico prima di riascoltare.
+  const releaseAudio = () => {
+    try { player.pause(); player.removeAttribute('src'); player.load(); } catch {}
+    try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {}
+    try { window.jdiag && jdiag('audio rilasciato', navigator.audioSession ? 'sessione=' + navigator.audioSession.type : 'sessione n/d'); } catch {}
+  };
   const runAfterSpeak = () => {
+    releaseAudio();
     document.body.classList.remove('speaking');
     if (typeof done === 'function') done('voce');
-    if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 600); }
+    if (afterSpeak) { const f = afterSpeak; afterSpeak = null; setTimeout(f, 900); }
     else if (typeof resumeWake === 'function') setTimeout(resumeWake, 400);   // fine risposta: torno ad aspettare "Jarvis"
   };
   // Voce neurale di Gemini (se attiva e il cervello è collegato); in caso di problemi, voce dell'iPhone.
@@ -521,6 +529,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       if (lastUrl) URL.revokeObjectURL(lastUrl);
       lastUrl = URL.createObjectURL(blob);
       player.onended = runAfterSpeak; player.onerror = () => onFail('riproduzione');
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
       player.src = lastUrl;
       await player.play();
     } catch (e) { onFail(e.message || 'errore'); }
@@ -1305,11 +1314,18 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
       idleT = setTimeout(finish, auto ? 8000 : 9000);  // nessuna parola: chiudo
       // iPhone: dopo che Jarvis ha parlato, a volte il microfono si apre "muto" (non arriva nemmeno l'inizio
       // della voce). Se in 3 secondi non arriva alcun segnale, lo chiudo e lo riapro da capo (fino a 3 volte).
-      if (auto && tries < 3) {
+      if (auto) {
         let heardSomething = false;
         rec.onaudiostart = () => {}; rec.onsoundstart = () => { heardSomething = true; }; rec.onspeechstart = () => { heardSomething = true; };
         const me = rec;
-        setTimeout(() => { if (rec === me && !heardSomething && !txt) { me.onend = null; try { me.abort(); } catch {} rec = null; clearTimeout(idleT); setTimeout(() => listen(true, tries + 1), 400); } }, 3000);
+        setTimeout(() => {
+          if (rec !== me || heardSomething || txt) return;
+          me.onend = null; try { me.abort(); } catch {} rec = null; clearTimeout(idleT);
+          if (tries < 1) { releaseAudio(); setTimeout(() => listen(true, tries + 1), 700); return; }
+          // Ancora muto: senza un tocco iPhone non lo sblocca. Fermo il giro a vuoto e chiedo un tocco.
+          try { window.jdiag && jdiag('microfono muto', 'chiedo un tocco'); } catch {}
+          convo = false; micUi(false); $('status').textContent = 'Tocca il cerchio per rispondere';
+        }, 3000);
       }
     } catch {
       rec = null; convo = false; micUi(false);
