@@ -410,7 +410,7 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   const clean=(u)=>String(u).replace(/\/[A-Za-z0-9_-]{20,}(?=\/|$)/g,'/[token]').replace(/([?&](key|token)=)[^&]+/gi,'$1[x]');
   function d(ev,info){ try{ log.push([new Date().toISOString().slice(11,23),ev,info===undefined?'':String(info).slice(0,160)]); if(log.length>MAX) log=log.slice(-MAX); localStorage.setItem(KEY,JSON.stringify(log)); }catch(e){} }
   window.jdiag=d;
-  d('avvio', 'standalone='+(navigator.standalone||matchMedia('(display-mode: standalone)').matches)+' v='+(document.querySelector('meta[name=version]')||{}).content);
+  d('avvio', 'standalone='+(navigator.standalone||matchMedia('(display-mode: standalone)').matches)+' versione=voce-3');
   addEventListener('error',e=>d('errore-js',(e.message||'')+' @'+(e.lineno||'')));
   addEventListener('unhandledrejection',e=>d('promise-rifiutata',e.reason&&(e.reason.message||e.reason)));
   document.addEventListener('visibilitychange',()=>d('visibilita',document.visibilityState));
@@ -514,12 +514,19 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   // Voce neurale di Gemini (se attiva e il cervello è collegato); in caso di problemi, voce dell'iPhone.
   let neuralOffUntil = 0, lastUrl = null;
   const neuralOn = () => st.neural && st.brain && Date.now() > neuralOffUntil;
+  // Voce neurale più rapida: legge solo le prime frasi (al massimo circa 220 caratteri); il resto è sullo schermo.
+  const shortSpeech = (t) => {
+    const parts = String(t).replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]*/g) || [String(t)];
+    let out = '';
+    for (const p of parts) { if (out && (out + p).length > 220) break; out += p; }
+    return (out || String(t)).slice(0, 300).trim();
+  };
   async function speakNeural(text, onFail) {
     try {
       if (typeof work === 'function') work('voce');
       document.body.classList.add('speaking');
       const r = await fetch(st.brain.replace(/\/chat$/, '/speak'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 1200), voice: st.neuralVoice || 'voice_kwv0be1dour5', style: st.neuralStyle || '' }) });
+        body: JSON.stringify({ text: shortSpeech(text), voice: st.neuralVoice || 'voice_kwv0be1dour5', style: st.neuralStyle || '' }) });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         if (r.status === 429) neuralOffUntil = Date.now() + 60 * 60 * 1000;   // limite: per un'ora uso la voce dell'iPhone
