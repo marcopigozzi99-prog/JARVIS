@@ -317,6 +317,11 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
         <label class="note-small" style="display:flex;gap:8px;align-items:center;color:var(--fg)"><input type="checkbox" id="wakeOn"> Ascolto continuo: rispondi quando dico "Jarvis"</label>
         <p class="note-small" style="margin:0">Con l'app aperta resta in ascolto e lo schermo resta acceso. All'apertura basta un tocco sul cerchio per accendere il microfono (regola di iPhone). Consuma più batteria.</p>
       </div>
+      <div style="border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+        <span class="note-small" style="color:var(--fg)">Diagnosi voce (per il controllo dei bug)</span>
+        <div class="linkrow"><button class="btn small" type="button" id="diagCopy">Copia diagnosi</button><button class="btn small" type="button" id="diagClear">Azzera</button><span class="note-small" id="diagMsg"></span></div>
+        <textarea id="diagOut" readonly rows="4" aria-label="Testo della diagnosi" style="background:var(--ink);border:1px solid var(--line);color:var(--fg);font:11px var(--mono);padding:8px;border-radius:8px;display:none"></textarea>
+      </div>
       <details style="border-top:1px solid var(--line);padding-top:12px">
         <summary class="note-small" style="cursor:pointer;color:var(--fg)">Voce di riserva dell'iPhone (usata solo se Gemini non risponde)</summary>
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
@@ -396,6 +401,42 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
   </div>
 </div>
 
+<script>
+/* Diagnosi voce: registra gli eventi di microfono, riconoscimento, voce e rete (senza token) per il controllo dei bug. */
+(function(){
+  const KEY='jarvis-diag', MAX=500; let log=[];
+  try{ log=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ log=[]; }
+  const t0=Date.now();
+  const clean=(u)=>String(u).replace(/\/[A-Za-z0-9_-]{20,}(?=\/|$)/g,'/[token]').replace(/([?&](key|token)=)[^&]+/gi,'$1[x]');
+  function d(ev,info){ try{ log.push([new Date().toISOString().slice(11,23),ev,info===undefined?'':String(info).slice(0,160)]); if(log.length>MAX) log=log.slice(-MAX); localStorage.setItem(KEY,JSON.stringify(log)); }catch(e){} }
+  window.jdiag=d;
+  d('avvio', 'standalone='+(navigator.standalone||matchMedia('(display-mode: standalone)').matches)+' v='+(document.querySelector('meta[name=version]')||{}).content);
+  addEventListener('error',e=>d('errore-js',(e.message||'')+' @'+(e.lineno||'')));
+  addEventListener('unhandledrejection',e=>d('promise-rifiutata',e.reason&&(e.reason.message||e.reason)));
+  document.addEventListener('visibilitychange',()=>d('visibilita',document.visibilityState));
+  addEventListener('pagehide',()=>d('pagehide')); addEventListener('pageshow',e=>d('pageshow','persisted='+e.persisted));
+  const SR0=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(SR0){
+    let n=0;
+    const W=function(){ const r=new SR0(); const id=++n;
+      ['start','audiostart','soundstart','speechstart','speechend','soundend','audioend','end','nomatch'].forEach(k=>r.addEventListener(k,()=>d('rec#'+id+' '+k)));
+      r.addEventListener('error',e=>d('rec#'+id+' ERRORE',e.error+(e.message?' '+e.message:'')));
+      r.addEventListener('result',e=>{ try{ const x=e.results[e.results.length-1]; d('rec#'+id+' risultato',(x.isFinal?'finale: ':'parziale: ')+x[0].transcript); }catch(_){} });
+      const st=r.start.bind(r); r.start=function(){ d('rec#'+id+' start()','continuous='+r.continuous+' interim='+r.interimResults+' lang='+r.lang); try{ return st(); }catch(err){ d('rec#'+id+' start FALLITO',err.name+' '+err.message); throw err; } };
+      const ab=r.abort.bind(r); r.abort=function(){ d('rec#'+id+' abort()'); return ab(); };
+      const so=r.stop.bind(r); r.stop=function(){ d('rec#'+id+' stop()'); return so(); };
+      return r; };
+    W.prototype=SR0.prototype;
+    if(window.SpeechRecognition) window.SpeechRecognition=W; if(window.webkitSpeechRecognition) window.webkitSpeechRecognition=W;
+  } else d('riconoscimento','non disponibile');
+  if(window.speechSynthesis){ const sp=speechSynthesis.speak.bind(speechSynthesis); speechSynthesis.speak=function(u){ d('voce-iphone speak',(u.text||'').slice(0,40)); try{ u.addEventListener('end',()=>d('voce-iphone end')); u.addEventListener('error',e=>d('voce-iphone ERRORE',e.error)); }catch(_){} return sp(u); }; }
+  const A=window.Audio; window.Audio=function(src){ const a=new A(src); ['play','playing','pause','ended','stalled','waiting'].forEach(k=>a.addEventListener(k,()=>d('audio '+k))); a.addEventListener('error',()=>d('audio ERRORE',a.error&&a.error.code)); const pl=a.play.bind(a); a.play=function(){ const p=pl(); if(p&&p.catch) p.catch(err=>d('audio play RIFIUTATO',err.name)); return p; }; return a; };
+  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){ const g=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices); navigator.mediaDevices.getUserMedia=function(c){ d('getUserMedia'); return g(c).then(s=>{d('getUserMedia ok');return s;},err=>{d('getUserMedia ERRORE',err.name);throw err;}); }; }
+  const F=window.fetch.bind(window); window.fetch=function(u,o){ const t=Date.now(), url=clean(typeof u==='string'?u:(u&&u.url)||''); return F(u,o).then(r=>{ d('rete '+((o&&o.method)||'GET')+' '+r.status, url.slice(0,90)+' '+(Date.now()-t)+'ms'); return r; },err=>{ d('rete ERRORE',url.slice(0,90)+' '+err.message); throw err; }); };
+  window.jdiagReport=function(){ const lines=['DIAGNOSI JARVIS '+new Date().toLocaleString('it-IT'),'UA: '+navigator.userAgent,'Voci iPhone it: '+((window.speechSynthesis&&speechSynthesis.getVoices().filter(v=>/^it/i.test(v.lang)).length)||0),'---']; log.forEach(l=>lines.push(l.join(' | '))); return lines.join('\n'); };
+  window.jdiagClear=function(){ log=[]; try{localStorage.removeItem(KEY);}catch(e){} d('azzerato'); };
+})();
+</script>
 <script src="lista.js"></script>
 <script>
 (() => {
@@ -1490,6 +1531,14 @@ ul.plan li span { min-width: 0; overflow-wrap: anywhere; }
     b.onclick = () => { $('neuralVoice').value = id || label; st.neuralVoice = id || label; save(); $('neuralTest').click(); }; $('neuralPresets').appendChild(b); });
   // La vecchia voce creata nel progetto a pagamento non funziona più: passo alla nuova, gratuita.
   if (!st.voiceMigrated) { if (!st.neuralVoice || /^voice_/.test(st.neuralVoice)) st.neuralVoice = JARVIS_VOICE; if (st.neural === undefined) st.neural = true; st.voiceMigrated = 1; save(); }
+
+  // Diagnosi voce: copia e azzera
+  (function(){ const out=$('diagOut'), msg=$('diagMsg'); if(!out) return;
+    $('diagCopy').addEventListener('click',()=>{ const t=window.jdiagReport?jdiagReport():''; out.value=t; out.style.display='block';
+      const done=()=>{ msg.textContent='Copiata: incollala nella chat con Claude'; };
+      try{ navigator.clipboard.writeText(t).then(done,()=>{ out.focus(); out.select(); msg.textContent='Seleziona il testo e copialo'; }); }catch(e){ out.focus(); out.select(); msg.textContent='Seleziona il testo e copialo'; } });
+    $('diagClear').addEventListener('click',()=>{ window.jdiagClear&&jdiagClear(); out.value=''; out.style.display='none'; msg.textContent='Azzerata'; });
+  })();
   $('wakeOn').checked = st.wake !== false;
   $('wakeOn').addEventListener('change', () => { st.wake = $('wakeOn').checked; save(); if (st.wake) { wakeBlocked = false; startWake(); } else { stopWake(false); micUi(false); $('status').textContent = 'Pronto'; try { wakeLock && wakeLock.release(); } catch {} } });
   $('neuralOn').checked = !!st.neural; $('neuralVoice').value = st.neuralVoice || ''; $('neuralStyle').value = st.neuralStyle || '';
